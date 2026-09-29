@@ -110,7 +110,7 @@ def recommendations(res: dict, req) -> list[dict]:
     dq = res["data_quality"]
     if dq["n_assumed"]:
         low = [a for a in res["assumptions"] if a["confidence"] == "Low" and a["group"] != "Margins"]
-        names = ", ".join(a["parameter"] for a in low[:8]) + ("…" if len(low) > 8 else "")
+        names = ", ".join(a["parameter"] for a in low[:8]) + (f" and {len(low) - 8} more" if len(low) > 8 else "")
         add("warning", "Confirm assumptions before design release", f"{dq['n_assumed']} parameters are unconfirmed engineering assumptions ({dq['n_low']} low confidence): {names}. Replace them with measured or supplier data.")
     add("info", "Verification", "Validate the cell-to-cell temperature spread and the flow distribution with a CFD or 1-D network model and confirm the predicted temperatures with a module-level thermal test before freezing the design. "
         "Final radiator / chiller sizing requires detailed air-side and exchanger-design information.")
@@ -128,3 +128,14 @@ def _remedy(check_id: str) -> str:
         "7": "Reduce the C-rate demand (power limiting) or select a cell with a higher continuous/pulse rating.",
         "8": "Reduce the channel velocity or loop losses (larger channels, shorter paths, fewer plates in series) or select a higher-head pump.",
     }.get(check_id, "")
+
+
+def verdict(res: dict) -> tuple[str, str]:
+    """(level, sentence) - overall statement on the evaluated checks: level is 'fail', 'warning' or 'pass'."""
+    fails = [c for c in res["checks"] if c["status"] == "FAIL"]
+    warns = [c for c in res["checks"] if c["status"] == "WARNING" and not c["supplementary"]]
+    if fails:
+        return "fail", f"Design not acceptable as specified: {len(fails)} check(s) failed."
+    if warns:
+        return "warning", f"Design acceptable with reservations: {len(warns)} warning(s)."
+    return "pass", "Design meets all evaluated checks."

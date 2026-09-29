@@ -4,6 +4,7 @@ from __future__ import annotations
 import io
 import math
 import os
+import threading
 from xml.sax.saxutils import escape
 
 import matplotlib
@@ -22,6 +23,7 @@ from reportlab.platypus.tableofcontents import TableOfContents
 from ..engine.assumptions import CATALOG
 from ..engine.schemas import AnalysisRequest
 from . import charts
+from .labels import CRATE_FIELDS, VEHICLE_FIELDS, cell_spec, cell_tables, field_label, provenance_of, value_text
 from .text import LIMITATIONS, METHODOLOGY, recommendations, report_meta
 
 # ------------------------------------------------------------------------------------------------ fonts & styles
@@ -37,16 +39,18 @@ STATUS = {"PASS": (OKC, OKBG), "WARNING": (WARNC, WARNBG), "FAIL": (FAILC, FAILB
 
 S = {
     "body": ParagraphStyle("body", fontName="DV", fontSize=8.4, leading=11.6, textColor=INK, spaceAfter=4),
-    "small": ParagraphStyle("small", fontName="DV", fontSize=7.2, leading=9.2, textColor=INK),
+    "small": ParagraphStyle("small", fontName="DV", fontSize=7.2, leading=9.2, textColor=INK, spaceBefore=3, spaceAfter=2),
+    "formula": ParagraphStyle("formula", fontName="DV", fontSize=7.8, leading=12.5, textColor=INK, spaceBefore=2, spaceAfter=6),
     "cell": ParagraphStyle("cell", fontName="DV", fontSize=7.3, leading=9.0, textColor=INK),
     "cellb": ParagraphStyle("cellb", fontName="DV-B", fontSize=7.3, leading=9.0, textColor=INK),
     "head": ParagraphStyle("head", fontName="DV-B", fontSize=7.3, leading=9.0, textColor=colors.white),
     "mono": ParagraphStyle("mono", fontName="DV-M", fontSize=6.9, leading=8.6, textColor=INK),
     "caption": ParagraphStyle("caption", fontName="DV-I", fontSize=7.2, leading=9, textColor=MUTED, spaceAfter=8, alignment=TA_CENTER),
     "H1": ParagraphStyle("H1", fontName="DV-B", fontSize=14.5, leading=18, textColor=NAVY, spaceBefore=4, spaceAfter=6),
-    "H2": ParagraphStyle("H2", fontName="DV-B", fontSize=10, leading=13, textColor=ACCENT, spaceBefore=8, spaceAfter=3),
-    "note": ParagraphStyle("note", fontName="DV", fontSize=7.6, leading=10, textColor=INK, backColor=colors.HexColor("#eef4fb"), borderPadding=(4, 5, 4, 5), spaceBefore=3, spaceAfter=7),
-    "warn": ParagraphStyle("warn", fontName="DV", fontSize=7.6, leading=10, textColor=INK, backColor=WARNBG, borderPadding=(4, 5, 4, 5), spaceBefore=3, spaceAfter=7),
+    "H1c": ParagraphStyle("H1c", fontName="DV-B", fontSize=14.5, leading=18, textColor=NAVY, spaceBefore=4, spaceAfter=6),
+    "H2": ParagraphStyle("H2", fontName="DV-B", fontSize=10, leading=13, textColor=ACCENT, spaceBefore=9, spaceAfter=3),
+    "note": ParagraphStyle("note", fontName="DV", fontSize=7.6, leading=10, textColor=INK, backColor=colors.HexColor("#eef4fb"), borderPadding=(4, 5, 4, 5), spaceBefore=8, spaceAfter=9),
+    "warn": ParagraphStyle("warn", fontName="DV", fontSize=7.6, leading=10, textColor=INK, backColor=WARNBG, borderPadding=(4, 5, 4, 5), spaceBefore=8, spaceAfter=9),
 }
 FW = 174 * mm          # frame width
 
@@ -67,6 +71,20 @@ def n(v, d=4, unit: str = "") -> str:
         return v
     s = f"{v:.{d}g}"
     return f"{s}{(' ' + unit) if unit else ''}"
+
+
+def sentence(t) -> str:
+    """Escape and terminate with exactly one full stop."""
+    t = str(t).strip()
+    return esc(t.rstrip(".") + ".") if t else ""
+
+
+def mathtext(t: str) -> str:
+    """Escape plain-text formulas and turn X_sub / X_{sub} into real subscripts."""
+    import re
+    t = esc(t)
+    t = re.sub(r"_\{([^}]+)\}", r"<sub>\1</sub>", t)
+    return re.sub(r"\b([A-Za-zΑ-Ωα-ωΔ]{1,3})_([A-Za-z0-9,]+)", r"\1<sub>\2</sub>", t)
 
 
 def P(text, style="body"):
@@ -110,7 +128,8 @@ def kvt(pairs, widths=(62, 112)):
     return tbl([[f"<b>{esc(k)}</b>", v] for k, v in pairs], widths, header=False)
 
 
-def fig(png: bytes | None, caption: str, width=FW, max_h=None):
+def fig(png: bytes | None, caption: str, width=FW, max_h=None, heading: str | None = None):
+    """Figure + caption (+ optional level-2 heading) kept together on one page."""
     if not png:
         return []
     from PIL import Image as PILImage
@@ -120,7 +139,8 @@ def fig(png: bytes | None, caption: str, width=FW, max_h=None):
     hh = ww * h / w
     if max_h and hh > max_h:
         hh, ww = max_h, max_h * w / h
-    return [Image(io.BytesIO(png), width=ww, height=hh), Paragraph(esc(caption), S["caption"])]
+    items = ([Paragraph(esc(heading), S["H2"])] if heading else []) + [Spacer(1, 3), Image(io.BytesIO(png), width=ww, height=hh), Paragraph(esc(caption), S["caption"])]
+    return [KeepTogether(items)]
 
 
 # ------------------------------------------------------------------------------------------------ document
@@ -135,15 +155,16 @@ class ReportDoc(BaseDocTemplate):
         self._k = 0
 
     def afterFlowable(self, fl):
-        if isinstance(fl, Paragraph) and fl.style.name in ("H1", "H2"):
-            level = 0 if fl.style.name == "H1" else 1
-            text = fl.getPlainText()
-            self._k += 1
-            key = f"h{self._k}"
-            self.canv.bookmarkPage(key)
-            self.canv.addOutlineEntry(text, key, level=level, closed=level > 0)
-            if level == 0:
-                self.notify("TOCEntry", (level, text, self.page))
+        for h in (getattr(fl, "_content", None) or [fl]) if isinstance(fl, KeepTogether) else [fl]:
+            if isinstance(h, Paragraph) and h.style.name in ("H1", "H2"):
+                level = 0 if h.style.name == "H1" else 1
+                text = h.getPlainText()
+                self._k += 1
+                key = f"h{self._k}"
+                self.canv.bookmarkPage(key)
+                self.canv.addOutlineEntry(text, key, level=level, closed=level > 0)
+                if level == 0:
+                    self.notify("TOCEntry", (level, text, self.page))
 
     def _cover(self, c, doc):
         w, h = A4
@@ -187,13 +208,7 @@ class ReportDoc(BaseDocTemplate):
 
 
 # ------------------------------------------------------------------------------------------------ helpers
-def _prov(req: AnalysisRequest, path: str):
-    pv = req.provenance.get(path)
-    meta = CATALOG.get(path)
-    src = pv.source if pv else (meta.default_source if meta else "user")
-    conf = (pv.confidence if pv and pv.confidence else (meta.confidence if meta else "high")).capitalize()
-    label = {"user": "User-provided", "datasheet": "Datasheet", "assumed": "Assumed", "calculated": "Calculated"}[src if src in ("user", "datasheet", "assumed", "calculated") else "user"]
-    return label, conf
+_prov = provenance_of
 
 
 def H1(text):
@@ -211,7 +226,7 @@ def _issues_table(issues, codes_prefix=None, only=("error", "warning")):
             rows.append([i["severity"].upper(), i["code"], i["message"]])
     if len(rows) == 1:
         return P("No issues.", "small")
-    return tbl(rows, [20, 42, 112], status_cols=())
+    return tbl(rows, [18, 60, 96], status_cols=())
 
 
 # ------------------------------------------------------------------------------------------------ sections
@@ -258,30 +273,17 @@ def _sec1(req, meta):
 def _sec2(req, res):
     c = req.cell
     rows = [["Parameter", "Value", "Unit", "Source", "Confidence"]]
-    spec = [("Cell name", c.name, "", None), ("Chemistry", c.chemistry, "", None), ("Cell type", c.form_factor, "", None),
-            ("Nominal capacity", c.capacity_ah, "Ah", "cell.capacity_ah"), ("Nominal voltage", c.v_nom, "V", "cell.v_nom"), ("Maximum voltage", c.v_max, "V", "cell.v_max"),
-            ("Minimum voltage", c.v_min, "V", "cell.v_min"), ("DC internal resistance", c.r_dc_mohm, "mΩ", "cell.r_dc_mohm"), ("AC impedance (1 kHz)", c.r_ac_mohm, "mΩ", "cell.r_ac_mohm"),
-            ("Max continuous discharge", c.max_discharge_c, "C", "cell.max_discharge_c"), ("Max continuous charge", c.max_charge_c, "C", "cell.max_charge_c"),
-            ("Pulse discharge", c.pulse_discharge_c, "C", None), ("Pulse duration", c.pulse_duration_s, "s", None),
-            ("Dimensions L × W × H", f"{n(c.length_mm)} × {n(c.width_mm)} × {n(c.height_mm)}" if c.length_mm else None, "mm", None), ("Diameter", c.diameter_mm, "mm", None),
-            ("Mass", c.mass_kg, "kg", "cell.mass_kg"), ("Specific heat", c.cp_j_kg_k, "J/(kg·K)", "cell.cp_j_kg_k"),
-            ("Operating temperature", f"{n(c.t_op_min_c)} … {n(c.t_op_max_c)}" if c.t_op_max_c is not None else None, "°C", "cell.t_op_max_c"),
-            ("Recommended temperature", f"{n(c.t_rec_min_c)} … {n(c.t_rec_max_c)}" if c.t_rec_max_c is not None else None, "°C", "cell.t_rec_max_c"),
-            ("Charge temperature", f"{n(c.t_charge_min_c)} … {n(c.t_charge_max_c)}" if c.t_charge_max_c is not None else None, "°C", None)]
-    for label, val, unit, path in spec:
-        if val is None:
-            continue
-        src, conf = _prov(req, path or f"cell.{label}") if path else ("Datasheet / user", "–")
+    for label, val, unit, path in cell_spec(c):
+        src, conf = _prov(req, path) if path else ("Datasheet / user", "–")
         rows.append([label, n(val, 5), unit, src, conf])
-    tables = [name for name, obj in (("R vs SOC", c.r_vs_soc), ("R vs temperature", c.r_vs_temp), ("R map", c.r_map), ("OCV vs SOC", c.ocv_vs_soc), ("OCV map", c.ocv_map),
-                                     ("dU/dT vs SOC", c.dudt_vs_soc), ("Capacity vs temperature", c.capacity_vs_temp)) if obj is not None]
+    tables = cell_tables(c)
     out = H1("2  Cell information")
     out.append(P("All values below were reviewed and confirmed by the user before calculation (datasheet extraction is a proposal only). Source and confidence follow the assumptions register (Section 6)."))
     out.append(tbl(rows, [46, 34, 22, 40, 32]))
     out.append(P("Curves / maps available: " + (", ".join(tables) if tables else "none - only scalar data were provided."), "small"))
     m = res["models"]["resistance"]
-    out.append(P(f"<b>Resistance model used:</b> {esc(m['name'])}. {esc(m['description'])} Extrapolation policy: {esc(m['extrapolation_policy'])}. "
-                 f"<b>OCV model:</b> {esc(res['models']['ocv']['description'])}. <b>Entropic heat:</b> {esc(res['models']['entropic']['status'])}", "note"))
+    out.append(P(f"<b>Resistance model used:</b> {sentence(m['name'])} {sentence(m['description'])} Extrapolation policy: {sentence(m['extrapolation_policy'])} "
+                 f"<b>OCV model:</b> {sentence(res['models']['ocv']['description'])} <b>Entropic heat:</b> {sentence(res['models']['entropic']['status'])}", "note"))
     out += fig(charts.fig_cell_curves(c.model_dump(mode="json")), "Figure 2.1 - Cell characteristic curves used by the model")
     return out
 
@@ -320,17 +322,16 @@ def _sec4(req, res):
     if req.vehicle is not None and m["source"] == "vehicle_speed":
         v = req.vehicle
         out.append(H2("Vehicle parameters (road-load model)"))
-        out.append(P("F<sub>tractive</sub> = F<sub>acc</sub> + F<sub>roll</sub> + F<sub>aero</sub> + F<sub>grade</sub>;  P<sub>wheel</sub> = F·v;  P<sub>batt</sub> = P<sub>wheel</sub>/η (discharge) or P<sub>wheel</sub>·η·f<sub>regen</sub> (braking), plus auxiliaries.", "small"))
+        out.append(P("F<sub>tractive</sub> = F<sub>acc</sub> + F<sub>roll</sub> + F<sub>aero</sub> + F<sub>grade</sub>;  P<sub>wheel</sub> = F·v;  P<sub>batt</sub> = P<sub>wheel</sub>/η (discharge) or P<sub>wheel</sub>·η·f<sub>regen</sub> (braking), plus auxiliaries.", "formula"))
         rows = [["Parameter", "Value", "Source", "Confidence"]]
-        for lab, key, unit in (("Mass", "mass_kg", "kg"), ("Rolling resistance Crr", "crr", "-"), ("Drag coefficient Cd", "cd", "-"), ("Frontal area", "frontal_area_m2", "m²"), ("Wheel radius", "wheel_radius_m", "m"),
-                               ("Drivetrain efficiency", "drivetrain_eff", "-"), ("Auxiliary load", "aux_load_kw", "kW"), ("Road gradient", "gradient_pct", "%"), ("Air density", "air_density", "kg/m³"),
-                               ("Regen fraction", "regen_fraction", "-")):
-            s, cf = _prov(req, f"vehicle.{key}")
-            rows.append([lab, f"{n(getattr(v, key), 5)} {unit}", s, cf])
+        for lab, key, unit in VEHICLE_FIELDS:
+            if getattr(v, key) is None:
+                continue
+            s_, cf = _prov(req, f"vehicle.{key}")
+            rows.append([lab, f"{n(getattr(v, key), 5)} {unit}", s_, cf])
         out.append(tbl(rows, [60, 40, 40, 34]))
     lim = req.crate_limits
-    rows = [["C-rate limit", "Value"]] + [[lab, n(getattr(lim, k))] for lab, k in (("Continuous discharge [C]", "cont_discharge_c"), ("Peak discharge [C]", "peak_discharge_c"), ("Peak discharge duration [s]", "peak_discharge_duration_s"),
-                                                                                   ("Charging [C]", "charge_c"), ("Regenerative [C]", "regen_c"), ("Peak regenerative [C]", "peak_regen_c"), ("Peak regen duration [s]", "peak_regen_duration_s")) if getattr(lim, k) is not None]
+    rows = [["C-rate limit", "Value"]] + [[f"{lab} [{unit}]", n(getattr(lim, k))] for lab, k, unit in CRATE_FIELDS if getattr(lim, k) is not None]
     if len(rows) > 1:
         out += [H2("Charge / discharge C-rate definition"), tbl(rows, [80, 40])]
     out += fig(charts.fig_cycle(L), "Figure 4.1 - Load profile used in the analysis")
@@ -342,13 +343,15 @@ def _sec5(req):
     out.append(P("Complete list of thermal, cooling and model inputs. Values not entered by the user are engineering defaults and appear in the assumptions register (Section 6)."))
 
     def block(title, obj, prefix, skip=()):
-        rows = [["Parameter", "Value", "Source", "Confidence"]]
+        rows = [["Parameter", "Value", "Unit", "Source", "Confidence"]]
         for k, v in obj.model_dump(mode="json").items():
             if v is None or k in skip:
                 continue
-            s, cf = _prov(req, f"{prefix}.{k}")
-            rows.append([k.replace("_", " "), n(v, 6), s, cf])
-        return [H2(title), tbl(rows, [64, 50, 34, 26])] if len(rows) > 1 else []
+            path = f"{prefix}.{k}"
+            src, conf = _prov(req, path)
+            label, unit = field_label(path)
+            rows.append([label, n(value_text(path, v), 6), unit, src, conf])
+        return [H2(title), tbl(rows, [68, 44, 17, 25, 20])] if len(rows) > 1 else []
     out += block("Heat / resistance model", req.resistance, "resistance") + block("Entropic model", req.entropic, "entropic") + block("Thermal model & design philosophy", req.thermal, "thermal")
     out += block("Coolant", req.coolant, "coolant")
     if req.cold_plate is not None:
@@ -362,25 +365,28 @@ def _sec5(req):
 def _sec6(res):
     out = H1("6  Assumptions & data quality")
     rows_all = res["assumptions"]
-    cnt = {}
+    cnt: dict[str, int] = {}
     for r in rows_all:
         cnt[r["source_class"]] = cnt.get(r["source_class"], 0) + 1
     out.append(P("Every parameter that influences a result is listed with its source class and confidence. <b>Assumed</b> values are engineering defaults that have not been confirmed by the user and must be verified before design release. "
                  + "Counts: " + ", ".join(f"{k} {v}" for k, v in cnt.items()) + f"; low confidence: {sum(1 for r in rows_all if r['confidence'] == 'Low')}."))
-    rows = [["Parameter", "Value", "Unit", "Source class", "Confidence", "Source / basis"]]
-    extra = []
-    for i, r in enumerate(sorted(rows_all, key=lambda r: (r["group"], r["parameter"])), start=1):
-        rows.append([r["parameter"], n(r["value"], 5), r["unit"], r["source_class"], r["confidence"], r["source"]])
-        col = {"Assumed": WARNBG, "Datasheet": colors.HexColor("#e8f0fb"), "User-provided": colors.HexColor("#e8f0fb"), "Calculated": NABG}.get(r["source_class"])
-        if col:
-            extra.append(("BACKGROUND", (3, i), (3, i), col))
-        if r["confidence"] == "Low":
-            extra.append(("BACKGROUND", (4, i), (4, i), FAILBG))
-        elif r["confidence"] == "Medium":
-            extra.append(("BACKGROUND", (4, i), (4, i), WARNBG))
-        else:
-            extra.append(("BACKGROUND", (4, i), (4, i), OKBG))
-    out.append(tbl(rows, [50, 22, 16, 22, 17, 47], zebra=False, extra=extra))
+    conf_rank = {"Low": 0, "Medium": 1, "High": 2}
+    groups = [("6.1  Unconfirmed engineering assumptions - verify before design release", lambda r: r["source_class"] == "Assumed"),
+              ("6.2  Customer, datasheet and user-entered inputs", lambda r: r["source_class"] not in ("Assumed", "Calculated")),
+              ("6.3  Calculated (derived) parameters", lambda r: r["source_class"] == "Calculated")]
+    for title, sel in groups:
+        rows_sel = sorted((r for r in rows_all if sel(r)), key=lambda r: (conf_rank.get(r["confidence"], 1), r["group"], r["parameter"]))
+        if not rows_sel:
+            continue
+        rows = [["Parameter", "Value", "Unit", "Source class", "Confidence", "Source / basis"]]
+        extra = []
+        for i, r in enumerate(rows_sel, start=1):
+            rows.append([r["parameter"], n(r["value"], 5), r["unit"], r["source_class"], r["confidence"], r["source"]])
+            col = {"Assumed": WARNBG, "Datasheet": colors.HexColor("#e8f0fb"), "User-provided": colors.HexColor("#e8f0fb"), "Calculated": NABG}.get(r["source_class"])
+            if col:
+                extra.append(("BACKGROUND", (3, i), (3, i), col))
+            extra.append(("BACKGROUND", (4, i), (4, i), {"Low": FAILBG, "Medium": WARNBG}.get(r["confidence"], OKBG)))
+        out += [H2(title), tbl(rows, [46, 21, 16, 22, 21, 48], zebra=False, extra=extra)]
     return out
 
 
@@ -388,7 +394,7 @@ def _sec7():
     out = H1("7  Calculation methodology")
     for title, paras in METHODOLOGY:
         out.append(H2(title))
-        out += [P(esc(t)) for t in paras]
+        out += [P(mathtext(t)) for t in paras]
     out.append(P("Sign convention: current and battery power are positive for discharge. Energy integrals use sample-and-hold: the quantity at sample k applies over [t<sub>k</sub>, t<sub>k+1</sub>) and the last sample has zero duration.", "note"))
     return out
 
@@ -404,21 +410,24 @@ def _sec8(res, req):
     for sid in steps:
         nd = tr.get(sid)
         if nd:
-            rows.append([nd["label"], nd["formula"] or "input", nd["substitution"] or "", f"{n(nd['value'], 5)} {nd['unit']}"])
+            rows.append([nd["label"], nd["formula"] or "input", (nd["substitution"] or "").replace("+ -", "− "), f"{n(nd['value'], 5)} {nd['unit']}"])
     out += [H2("Worked example at the instant of maximum pack heat"), tbl(rows, [40, 46, 52, 36]),
             P(f"Electrical energy is not heat: {esc(res['explanations']['electrical_vs_heat'])}", "note")]
     if res["series"].get("t"):
         out += fig(charts.fig_electrical(res), "Figure 8.1 - Electrical quantities over the duty (Graphs 1, 2, 3 and 7)")
         out += fig(charts.fig_heat(res), "Figure 8.2 - Heat generation and thermal accumulation (Graphs 4, 5, 6)")
         s = res["series"]
-        pk = max(range(len(s["q_pack_kw"])), key=lambda i: s["q_pack_kw"][i])
-        idx = sorted(set(list(range(0, min(3, len(s["t"])))) + list(range(max(0, pk - 3), min(len(s["t"]), pk + 4)))))
-        rows = [["t [s]", "SOC [%]", "I_pack [A]", "C-rate", "R [mΩ]", "Q_joule [W]", "Q_rev [W]", "Q_cell [W]", "Q_module [W]", "Q_pack [kW]", "P_batt [kW]", "State"]]
+        nt = len(s["t"])
+        pk = max(range(nt), key=lambda i: s["q_pack_kw"][i])
+        idx = sorted({0} | set(range(max(0, pk - 4), min(nt, pk + 5))))
+        rows = [["t [s]", "SOC [%]", "I_pack [A]", "C-rate [C]", "R [mΩ]", "Q_joule [W]", "Q_rev [W]", "Q_cell [W]", "Q_pack [kW]", "P_batt [kW]", "State"]]
         for i in idx:
-            rows.append([n(s["t"][i], 5), n(s["soc_pct"][i], 4), n(s["i_pack_a"][i], 4), n(s["c_rate"][i], 3), n(s["r_cell_mohm"][i], 4), n(s["q_joule_cell_w"][i], 4), n(s["q_rev_cell_w"][i], 3),
-                         n(s["q_cell_w"][i], 4), n(s["q_module_w"][i], 4), n(s["q_pack_kw"][i], 4), n(s["p_batt_kw"][i], 4), s["state"][i]])
-        out += [H2("Time-step results (extract - full series in the Excel workbook)"), tbl(rows, [11, 12, 14, 11, 12, 14, 12, 14, 15, 14, 14, 16]),
-                P("The extract shows the first samples and the samples around the maximum pack heat. The complete per-step results (time, SOC, current, C-rate, resistance, Joule / entropic / total heat, module and pack heat, battery power, state) are in the Excel report.", "small")]
+            r = [n(s["t"][i], 5), n(s["soc_pct"][i], 4), n(s["i_pack_a"][i], 4), n(s["c_rate"][i], 3), n(s["r_cell_mohm"][i], 4), n(s["q_joule_cell_w"][i], 4), n(s["q_rev_cell_w"][i], 3),
+                 n(s["q_cell_w"][i], 4), n(s["q_pack_kw"][i], 4), n(s["p_batt_kw"][i], 4), s["state"][i]]
+            rows.append([f"<b>{esc(c)}</b>" for c in r] if i == pk else r)
+        out += [KeepTogether([H2("Time-step results (extract - full series in the Excel workbook)"), tbl(rows, [13, 14, 16, 14, 15, 17, 17, 17, 17, 17, 17]),
+                              P("The extract shows the first sample and the samples around the instant of maximum pack heat (bold). The complete per-step results (time, SOC, current, C-rate, resistance, "
+                                "Joule / entropic / total heat, module and pack heat, battery power, state) are in the Excel report.", "small")])]
     return out
 
 
@@ -435,7 +444,7 @@ def _sec9(res):
     rows = [["Philosophy", "Q [kW]", "Basis"]] + [[names[k] + (" ◀ selected" if k == D["philosophy"] else ""), n(c[k]["value_w"] / 1000, 4) if c[k]["available"] else "n/a",
                                                     c[k].get("substitution") or c[k].get("note", "")] for k in names]
     out.append(tbl(rows, [52, 22, 100]))
-    out.append(P(f"<b>Q<sub>design</sub> = (Q<sub>relevant</sub> + Q<sub>ambient</sub>) × SF = ({n(D['q_relevant_w'] / 1e3, 4)} + {n(D['q_ambient_gain_w'] / 1e3, 3)}) × {D['safety_factor']:g} = {n(D['q_design_w'] / 1e3, 4)} kW</b>"))
+    out.append(P(f"<b>Q<sub>design</sub> = (Q<sub>relevant</sub> + Q<sub>ambient</sub>) × SF = ({n(D['q_relevant_w'] / 1e3, 4)} + {n(D['q_ambient_gain_w'] / 1e3, 3)}) × {D['safety_factor']:g} = {n(D['q_design_w'] / 1e3, 4)} kW</b>", "formula"))
     out += fig(charts.fig_design_levels(res), "Figure 9.1 - Design heat-load candidates")
     out += [P(f"<b>{esc(D['label'])}:</b> {esc(D['explanation'])}", "note"), H2("Peak thermal load versus sustained cooling requirement"), P(esc(D["peak_vs_sustained"]))]
     return out
@@ -487,17 +496,9 @@ def _sec12(res):
     out = H1("12  Pressure-drop calculation")
     cp, hy = res.get("cold_plate"), res.get("hydraulics")
     if not cp:
-        return out + [P("No cold plate was defined, so no channel hydraulics or thermal-resistance chain were calculated.", "warn")]
-    out.append(H2("Thermal resistance chain (per cell)"))
-    out.append(tbl([["Element", "R [K/W]", "Share"], ["Cell contact interface", n(cp["r_contact"], 4), f"{cp['r_contact'] / cp['r_total'] * 100:.1f} %"], ["TIM", n(cp["r_tim"], 4), f"{cp['r_tim'] / cp['r_total'] * 100:.1f} %"],
-                    ["Plate conduction", n(cp["r_plate"], 4), f"{cp['r_plate'] / cp['r_total'] * 100:.1f} %"], ["Coolant convection", n(cp["r_conv"], 4), f"{cp['r_conv'] / cp['r_total'] * 100:.1f} %"],
-                    ["<b>Overall R_total</b>", f"<b>{n(cp['r_total'], 4)}</b>", "100 %"]], [70, 50, 54]))
-    out += fig(charts.fig_resistance_chain(res), "Figure 12.1 - Thermal resistance chain")
-    out.append(tbl([["Quantity", "Value"], ["Convective coefficient h", f"{n(cp['h_w_m2k'], 4)} W/(m²·K)  (Nu = {n(cp['nusselt'], 4)})"], ["Overall U (cell contact area)", f"{n(cp['u_cell_w_m2k'], 4)} W/(m²·K)"],
-                    ["Overall U (plate footprint)", f"{n(cp['u_plate_w_m2k'], 4)} W/(m²·K)"], ["NTU / effectiveness", f"{n(cp['ntu'], 3)} / {n(cp['effectiveness'], 3)}"],
-                    ["Cell-to-coolant ΔT at the design heat", f"{n(res['design']['q_design_w'] / res['pack']['n_cells'] * cp['r_total'], 3)} K"]], [70, 104]))
-    out.append(P("<b>Thermal resistance vs overall heat-transfer coefficient.</b> R [K/W] is the absolute temperature rise per watt through a specific part of a specific geometry; resistances in series add. "
-                 "U [W/(m²·K)] = 1/(R·A<sub>ref</sub>) normalises the same resistance by a reference area, so it depends on the area chosen (here the cell contact area or the plate footprint) and is used to compare layers and technologies independent of size.", "note"))
+        return out + [P("No cold plate was defined, so no channel hydraulics were calculated.", "warn")]
+    out.append(P("Channel pressure drop from the Darcy-Weisbach relation with a Shah-London (laminar) or Haaland (turbulent) friction factor, plus minor losses and the external loop; "
+                 "the pump duty follows from ΔP·V̇ and the pump efficiency. The thermal side of the same channel calculation (convection coefficient, resistance chain) is in Section 13."))
     out.append(H2("Channel hydraulics"))
     out.append(tbl([["Quantity", "Value"], ["Flow velocity", f"{n(hy['velocity_m_s'], 4)} m/s"], ["Hydraulic diameter", f"{n(hy['dh_m'] * 1000, 4)} mm"], ["Reynolds number / regime", f"{n(hy['reynolds'], 5)} ({hy['regime']})"],
                     ["Darcy friction factor", n(hy["f_darcy"], 4)], ["Channel pressure drop", f"{n(hy['dp_channel_pa'] / 1000, 4)} kPa"], ["Minor losses", f"{n(hy['dp_minor_pa'] / 1000, 4)} kPa"],
@@ -505,8 +506,26 @@ def _sec12(res):
                     ["<b>Total pressure drop</b>", f"<b>{n(hy['dp_total_pa'] / 1e5, 4)} bar</b>"], ["Pack flow", f"{n(hy['q_pack_lpm'], 4)} L/min"], ["Hydraulic / electrical pump power", f"{n(hy['p_hyd_w'], 4)} W / {n(hy['p_elec_w'], 4)} W"]], [70, 104]))
     fl = [[f["severity"].upper(), f["code"], f["message"]] for f in hy["flags"]]
     if fl:
-        out += [H2("Hydraulic flags"), tbl([["Severity", "Code", "Message"]] + fl, [20, 44, 110])]
+        out += [H2("Hydraulic flags"), tbl([["Severity", "Code", "Message"]] + fl, [18, 52, 104])]
     out += [P(esc(w), "warn") for w in cp["warnings"]]
+    return out
+
+
+def _resistance_block(res):
+    cp = res.get("cold_plate")
+    if not cp:
+        return []
+    tot = cp["r_total"]
+    out = [H2("Cold-plate thermal resistance chain (per cell)")]
+    out.append(tbl([["Element", "R [K/W]", "Share"], ["Cell contact interface", n(cp["r_contact"], 4), f"{cp['r_contact'] / tot * 100:.1f} %"], ["TIM", n(cp["r_tim"], 4), f"{cp['r_tim'] / tot * 100:.1f} %"],
+                    ["Plate conduction", n(cp["r_plate"], 4), f"{cp['r_plate'] / tot * 100:.1f} %"], ["Coolant convection", n(cp["r_conv"], 4), f"{cp['r_conv'] / tot * 100:.1f} %"],
+                    ["<b>Overall R<sub>total</sub></b>", f"<b>{n(tot, 4)}</b>", "100 %"]], [70, 50, 54]))
+    out += fig(charts.fig_resistance_chain(res), "Figure 13.1 - Thermal resistance chain")
+    out.append(tbl([["Quantity", "Value"], ["Convective coefficient h", f"{n(cp['h_w_m2k'], 4)} W/(m²·K)  (Nu = {n(cp['nusselt'], 4)})"], ["Overall U (cell contact area)", f"{n(cp['u_cell_w_m2k'], 4)} W/(m²·K)"],
+                    ["Overall U (plate footprint)", f"{n(cp['u_plate_w_m2k'], 4)} W/(m²·K)"], ["NTU / effectiveness", f"{n(cp['ntu'], 3)} / {n(cp['effectiveness'], 3)}"],
+                    ["Cell-to-coolant ΔT at the design heat", f"{n(res['design']['q_design_w'] / res['pack']['n_cells'] * tot, 3)} K"]], [70, 104]))
+    out.append(P("<b>Thermal resistance vs overall heat-transfer coefficient.</b> R [K/W] is the absolute temperature rise per watt through a specific part of a specific geometry; resistances in series add. "
+                 "U [W/(m²·K)] = 1/(R·A<sub>ref</sub>) normalises the same resistance by a reference area, so it depends on the area chosen (here the cell contact area or the plate footprint) and is used to compare layers and technologies independent of size.", "note"))
     return out
 
 
@@ -518,12 +537,12 @@ def _sec13(res, req):
     supp = [c for c in res["checks"] if c["supplementary"]]
     if supp:
         out += [H2("Supplementary checks"), tbl([["#", "Check", "Status", "Value", "Assessment"]] + [[c["id"], c["name"], c["status"], c["value"], c["message"]] for c in supp], [8, 38, 16, 30, 82], status_cols=(2,))]
-    out += fig(charts.fig_temperature(res, req.pack.t_target_max_c), "Figure 13.1 - Predicted temperatures")
+    out += _resistance_block(res)
+    out += fig(charts.fig_temperature(res, req.pack.t_target_max_c), "Figure 13.2 - Predicted temperatures", heading="Predicted temperatures")
     m = res["margins"]
     rows = [["Margin", "Value", "Classification"]]
     if m["cooling"].get("available"):
-        mp = m["cooling"]["margin_pct"]
-        rows.append(["Cooling margin = installed / required", f"{'> 999' if mp is not None and mp > 999 else n(mp, 4)} % (ratio {n(m['cooling']['ratio'], 3)})",
+        rows.append(["Cooling margin = installed / required", f"{n(m['cooling']['margin_pct'], 4)} % (ratio {n(m['cooling']['ratio'], 3)})",
                      f"{m['cooling']['class']} (warning < {m['cooling']['warn_pct']:g} %, target ≥ {m['cooling']['target_pct']:g} %)"])
     if m["thermal"].get("available"):
         rows.append(["Thermal margin = allowed − predicted maximum T", f"{n(m['thermal']['margin_k'], 3)} K", f"{m['thermal']['class']} (warning < {m['thermal']['warn_k']:g} K)"])
@@ -541,15 +560,22 @@ def _sec14(sens):
     outs = sens["outputs"]
     rows = [["Parameter", "Change"] + [f"{o['label']} [{o['unit']}]" for o in outs]]
     rows.append(["<b>Base case</b>", ""] + [n(sens["base"][o["key"]], 4) for o in outs])
+    def cell_text(o, lv):
+        v = lv["metrics"].get(o["key"])
+        if v is None:
+            return "–"
+        if o["unit"] == "°C":                      # a percentage of a Celsius temperature is meaningless: show the absolute change
+            d = (lv.get("delta") or {}).get(o["key"]) or 0.0
+            return f"{n(v, 4)} ({'±0' if abs(d) < 0.005 else format(d, '+.2g')} K)"
+        d = lv["delta_pct"].get(o["key"]) or 0.0
+        return f"{n(v, 4)} ({'±0' if abs(d) < 0.005 else format(d, '+.2g')} %)"
+
     for p in sens["params"]:
         if p.get("skipped"):
             rows.append([p["label"], f"skipped: {p['skipped']}", "", "", "", ""])
             continue
         for i, lv in enumerate(p["levels"]):
-            if lv["status"] == "ok":
-                cells = [f"{n(lv['metrics'][o['key']], 4)} ({'±0' if abs(lv['delta_pct'][o['key']] or 0) < 0.005 else format(lv['delta_pct'][o['key']] or 0, '+.2g')} %)" if lv["metrics"].get(o["key"]) is not None else "–" for o in outs]
-            else:
-                cells = [f"{lv['status']}: {lv.get('reason', '')}"[:60], "", "", ""]
+            cells = [cell_text(o, lv) for o in outs] if lv["status"] == "ok" else [f"{lv['status']}: {lv.get('reason', '')}"[:60], "", "", ""]
             rows.append([p["label"] if i == 0 else "", lv["label"]] + cells)
     out += [H2("Results by parameter"), tbl(rows, [30, 16, 32, 32, 32, 32])]
     return out
@@ -561,7 +587,7 @@ def _sec15(recs):
     for r in recs:
         fg, bg, tag = colr[r["level"]]
         out.append(KeepTogether([Table([[Paragraph(f'<font color="{fg.hexval()}"><b>{tag}</b></font>', S["cell"]), Paragraph(f"<b>{esc(r['title'])}</b><br/>{esc(r['text'])}", S["cell"])]],
-                                       colWidths=[24 * mm, FW - 24 * mm], style=TableStyle([("BACKGROUND", (0, 0), (0, 0), bg), ("BOX", (0, 0), (-1, -1), 0.25, LINE), ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                                       colWidths=[28 * mm, FW - 28 * mm], style=TableStyle([("BACKGROUND", (0, 0), (0, 0), bg), ("BOX", (0, 0), (-1, -1), 0.25, LINE), ("VALIGN", (0, 0), (-1, -1), "TOP"),
                                                                                              ("LEFTPADDING", (0, 0), (-1, -1), 4), ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3)])),
                                  Spacer(1, 3)]))
     return out
@@ -580,17 +606,37 @@ def _sec17(res):
     nodes = sorted(tr.values(), key=lambda x: (order.get(x["kind"], 2)))
     rows = [["ID", "Quantity", "Value", "Kind / source", "Formula & substitution", "Depends on"]]
     for nd in nodes:
-        val = "–" if nd["value"] is None else f"{n(nd['value'], 5)} {nd['unit']}"
+        val = "–" if nd["value"] is None else f"{n(nd['value'], 5)} {nd['unit'] if nd['unit'] != '-' else ''}".strip()
         fs = (f"<font name='DV-M'>{esc(nd['formula'])}</font>" if nd["formula"] else "") + (f"<br/>= {esc(nd['substitution'])}" if nd["substitution"] else "")
-        rows.append([Paragraph(f"<font name='DV-M' size='6.2'>{esc(nd['id'])}</font>", S["cell"]), nd["label"], val, f"{nd['kind'].upper()}<br/>{esc(nd['source'])}", Paragraph(fs or "", S["cell"]), Paragraph(f"<font size='6.2'>{esc(', '.join(nd['inputs']))}</font>", S["cell"])])
-    out.append(tbl(rows, [26, 34, 24, 20, 46, 24]))
+        src = f"<b>{esc(nd['kind'].upper())}</b>" + (f"<br/>{esc(nd['source'])}" if nd.get("source") else "")
+        rows.append([Paragraph(f"<font name='DV-M' size='6.2'>{esc(nd['id'])}</font>", S["cell"]), nd["label"], val, Paragraph(src, S["cell"]), Paragraph(fs or "", S["cell"]),
+                     Paragraph(f"<font size='6.2'>{esc(', '.join(nd['inputs']))}</font>", S["cell"])])
+    out.append(tbl(rows, [30, 30, 22, 25, 42, 25]))
     return out
 
 
 # ------------------------------------------------------------------------------------------------ entry point
+def _protect_headings(story: list) -> list:
+    """A level-2 heading is never left alone at the bottom of a page: require room for the heading plus a few table rows."""
+    out: list = []
+    for f in story:
+        if isinstance(f, Paragraph) and f.style.name == "H2":
+            out.append(CondPageBreak(34 * mm))
+        out.append(f)
+    return out
+
+
+_BUILD_LOCK = threading.Lock()          # matplotlib's pyplot state is process-global: one report at a time
+
+
 def build_pdf(req: AnalysisRequest, res: dict, sens: dict | None = None) -> bytes:
     if res.get("status") == "blocked":
         raise ValueError("Cannot build a report for a blocked analysis")
+    with _BUILD_LOCK:
+        return _build_pdf(req, res, sens)
+
+
+def _build_pdf(req: AnalysisRequest, res: dict, sens: dict | None) -> bytes:
     meta = report_meta(req, res)
     recs = recommendations(res, req)
     buf = io.BytesIO()
@@ -605,9 +651,9 @@ def build_pdf(req: AnalysisRequest, res: dict, sens: dict | None = None) -> byte
     story += [NextPageTemplate("body"), PageBreak()]
     toc = TableOfContents()
     toc.levelStyles = [ParagraphStyle("toc0", fontName="DV", fontSize=9, leading=15, leftIndent=0, textColor=INK)]
-    story += [Paragraph("Contents", S["H1"]), toc, PageBreak()]
+    story += [Paragraph("Contents", S["H1c"]), toc, PageBreak()]
     story += _exec_summary(res, req, recs) + [PageBreak()]
     story += _sec1(req, meta) + _sec2(req, res) + _sec3(req, res) + _sec4(req, res) + _sec5(req) + _sec6(res) + _sec7() + _sec8(res, req) + _sec9(res) + _sec10(res) + _sec11(res, req)
     story += _sec12(res) + _sec13(res, req) + _sec14(sens) + _sec15(recs) + _sec16() + _sec17(res)
-    doc.multiBuild(story)
+    doc.multiBuild(_protect_headings(story))
     return buf.getvalue()

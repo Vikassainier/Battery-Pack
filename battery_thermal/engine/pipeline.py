@@ -87,10 +87,12 @@ def blocked(req: AnalysisRequest, issues: list[Issue]) -> dict:
 
 
 # ==================================================================================================
-def run_analysis(req: AnalysisRequest, *, mode: str = "full", _artefacts: dict | None = None) -> dict:
+def run_analysis(req: AnalysisRequest, *, mode: str = "full", _artefacts: dict | None = None, max_series_points: int | None = 6000) -> dict:
     """mode 'full': everything (series, trace, register). mode 'scalars': fast path used by sensitivity/optimisation.
 
     ``_artefacts`` (optional dict) receives internal objects (simulation, properties, ...) for the optimiser.
+    ``max_series_points``: the time series returned for the dashboard is thinned to about this many points; None returns every
+    time step (used by the Excel report so that the per-step results are complete).
     """
     full = mode == "full"
     issues: list[Issue] = validate_request(req)
@@ -387,7 +389,7 @@ def run_analysis(req: AnalysisRequest, *, mode: str = "full", _artefacts: dict |
     if full:
         _apply_trace_sources(tr, req)
         result["trace"] = tr.to_dict()
-        result["series"] = _series(sim, load, t_hot, dt_pack, dt_mod, uncooled, pack)
+        result["series"] = _series(sim, load, t_hot, dt_pack, dt_mod, uncooled, pack, max_series_points)
         result["load"] = load_summary(load, 3000)
     return jsonable(result)
 
@@ -496,8 +498,10 @@ def _register_heat_trace(tr: TraceLog, sim: SimResult, pack, rmodel, ent, req: A
     tr.calc("heat.r_pk", "Cell resistance R", float(sim.r_cell_ohm[i] * 1e3), "mΩ", f"R = {rmodel.name.split(' - ')[-1]}", f"R({fmt(sim.soc_pct[i])} %, {fmt(sim.t_cell_c[i])} °C) × scale {rmodel.scale:g}", ["in.soc", "in.t_cell"],
             note=rmodel.description)
     tr.calc("heat.q_joule_pk", "Joule heat per cell", float(sim.q_joule_cell[i]), "W", "Q_joule = I²·R", f"{fmt(sim.i_cell[i])}² × {fmt(sim.r_cell_ohm[i])}", ["heat.i_cell_pk", "heat.r_pk"])
+    dudt = float(sim.dudt_mv_k[i]) if np.isfinite(sim.dudt_mv_k[i]) else 0.0
+    tr.input("in.dudt_pk", "Entropic coefficient dU/dT at that instant", dudt, "mV/K", "calculated", ent.status)
     tr.calc("heat.q_rev_pk", "Entropic (reversible) heat per cell", float(sim.q_rev_cell[i]), "W", "Q_rev = −I·T·dU/dT",
-            f"−{fmt(sim.i_cell[i])} × {fmt(sim.t_cell_c[i] + 273.15)} K × {fmt(sim.dudt_mv_k[i])} mV/K", ["heat.i_cell_pk", "in.t_cell"], note=ent.status)
+            f"−{fmt(sim.i_cell[i])} × {fmt(sim.t_cell_c[i] + 273.15)} K × {fmt(dudt)} mV/K", ["heat.i_cell_pk", "in.t_cell", "in.dudt_pk"], note=ent.status)
     tr.result("heat.q_cell_pk", "Total cell heat at peak", float(sim.q_cell[i]), "W", "Q_cell = Q_joule + Q_rev", f"{fmt(sim.q_joule_cell[i])} + {fmt(sim.q_rev_cell[i])}", ["heat.q_joule_pk", "heat.q_rev_pk"])
     tr.result("heat.q_module_pk", "Module heat at peak", float(sim.q_module[i]), "W", "Q_module = cells_per_module · Q_cell", f"{pack.cells_per_module} × {fmt(sim.q_cell[i])}", ["heat.q_cell_pk"])
     tr.result("heat.q_pack_pk", "Maximum pack heat", float(sim.q_pack[i] / 1e3), "kW", "Q_pack = Ns·Np·Q_cell  (= Ns·Np·I_cell²·R + reversible)", f"{pack.ns} × {pack.np} × {fmt(sim.q_cell[i])} / 1000", ["heat.q_cell_pk", "in.ns", "in.np"])
@@ -535,9 +539,9 @@ def _kpis(pack, summ, dl, fr, hyd, m, t_margin, t_hot, dt_pack, has_t, sizing, c
     }
 
 
-def _series(sim: SimResult, load: LoadProfile, t_hot, dt_pack, dt_mod, uncooled, pack) -> dict:
+def _series(sim: SimResult, load: LoadProfile, t_hot, dt_pack, dt_mod, uncooled, pack, max_points: int | None = 6000) -> dict:
     n = len(sim.t)
-    step = max(1, n // 6000)
+    step = max(1, n // max_points) if max_points else 1
     sl = slice(None, None, step)
     cum = np.concatenate([[0.0], np.cumsum(sim.q_pack[:-1] * sim.dt[:-1])]) / 3.6e6
     cum_j = np.concatenate([[0.0], np.cumsum(sim.q_joule_cell[:-1] * sim.dt[:-1] * pack.n_cells)]) / 3.6e6

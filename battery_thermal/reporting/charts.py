@@ -144,16 +144,16 @@ def fig_resistance_chain(res: dict):
     if not cp:
         return None
     parts = [("Contact", cp["r_contact"], ORANGE), ("TIM", cp["r_tim"], PURPLE), ("Plate", cp["r_plate"], GREY), ("Convection", cp["r_conv"], BLUE)]
-    fig, a = plt.subplots(figsize=(7.4, 1.5))
+    fig, a = plt.subplots(figsize=(7.4, 2.3))
     left = 0.0
     for n, r, c in parts:
         a.barh([0], [r], left=left, color=c, label=f"{n} {r:.4f} K/W ({r / cp['r_total'] * 100:.1f} %)")
         left += r
     a.set_yticks([])
-    a.set(title=f"Thermal resistance chain per cell - R_total = {cp['r_total']:.4f} K/W", xlabel="K/W")
-    a.legend(ncol=4, loc="upper center", bbox_to_anchor=(0.5, -0.45))
+    a.set(title=f"Thermal resistance chain per cell - R_total = {cp['r_total']:.4f} K/W", xlabel="thermal resistance [K/W]")
     a.grid(axis="y", visible=False)
-    fig.tight_layout()
+    fig.subplots_adjust(left=0.03, right=0.97, top=0.84, bottom=0.44)      # room for the legend below the axis label
+    fig.legend(*a.get_legend_handles_labels(), loc="lower center", ncol=2, fontsize=7.5, frameon=False, columnspacing=3.5, handlelength=1.6)
     return _png(fig)
 
 

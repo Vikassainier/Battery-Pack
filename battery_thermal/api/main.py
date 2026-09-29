@@ -27,6 +27,7 @@ from ..engine.schemas import (
 from ..engine.validation import has_errors, validate_cell, validate_pack
 from .routes_analysis import router as analysis_router
 from .routes_ingest import router as ingest_router
+from .routes_report import router as report_router
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -36,6 +37,7 @@ app = FastAPI(title="EV Battery Thermal Analysis Tool", version="0.1.0",
 
 app.include_router(ingest_router)
 app.include_router(analysis_router)
+app.include_router(report_router)
 
 
 class ConfigCheck(BaseModel):
