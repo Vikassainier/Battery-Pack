@@ -35,8 +35,8 @@ Interactive API documentation: `http://127.0.0.1:8000/docs`.
 docker build -t battery-thermal . && docker run --rm -p 8000:8000 battery-thermal
 ```
 
-The server is stateless: uploaded files are parsed in memory, nothing is written to disk, and the project
-(*Save project* / *Open project…*) lives in the browser and in a JSON file you keep.
+The server is stateless: uploaded files are parsed in memory and never stored (the only files it ever writes are the synthetic sample datasheets,
+rebuilt on first use if missing), and the project (*Save project* / *Open project…*) lives in the browser and in a JSON file you keep.
 
 ## The workflow (left-hand navigation)
 
