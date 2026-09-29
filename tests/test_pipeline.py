@@ -74,6 +74,24 @@ def test_unconfirmed_cell_blocks_the_analysis():
     assert ok["status"] == "ok"
 
 
+def test_oversized_load_definitions_are_refused_before_any_calculation():
+    """A cycle (or a C-rate profile at a tiny step) that would need more than 500 000 time steps is rejected with advice, quickly."""
+    big = run_analysis(base_request(cycle=cycle_const_current(100.0, n=250_001), cycle_options={"repeats": 2}))       # 250 001 × 2 = 500 002 steps
+    assert big["status"] == "blocked"
+    issue = next(i for i in big["issues"] if i["code"] == "CYCLE_TOO_LONG")
+    assert "500,002" in issue["message"] and "Resample" in issue["hint"]
+    edge = run_analysis(base_request(cycle=cycle_const_current(100.0, n=200), cycle_options={"repeats": 200}))        # 40 000 steps: fine
+    assert "CYCLE_TOO_LONG" not in {i["code"] for i in edge["issues"]}
+    from battery_thermal.engine.schemas import CRateProfile, Segment
+    req = base_request()
+    req.cycle = None                                                                                                   # C-rate duty profile instead of a cycle
+    req.crate_profile = CRateProfile(dt_s=0.001, segments=[Segment(kind="discharge", c_rate=1.0, duration_s=3600.0)])   # 3.6 million steps
+    prof = run_analysis(req)
+    assert prof["status"] == "blocked" and "CYCLE_TOO_LONG" in {i["code"] for i in prof["issues"]}
+    req.crate_profile = CRateProfile(dt_s=1.0, segments=[Segment(kind="discharge", c_rate=1.0, duration_s=3600.0)])    # 3 600 steps: fine
+    assert "CYCLE_TOO_LONG" not in {i["code"] for i in run_analysis(req)["issues"]}
+
+
 def test_missing_data_errors_are_reported_together():
     r = run_analysis(base_request(cell=cell_100ah(capacity_ah=None, r_dc_mohm=None, v_nom=None), pack=PackConfig(ns=120, np=1, n_modules=10, cells_per_module=10)))
     codes = {i["code"] for i in r["issues"] if i["severity"] == "error"}

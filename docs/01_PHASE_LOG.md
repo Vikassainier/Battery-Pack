@@ -12,11 +12,11 @@ the module docstrings carry the same derivations.
 | 4 | Electrical model + heat generation (resistance levels 1-4, entropic heat) | 26 |
 | 5 | Lumped transient thermal model, design heat-load philosophies, capacity sizing | 22 |
 | 6-7 | Coolant properties, flow requirement, cold-plate resistance chain, channel hydraulics, pump | 25 |
-| - | Pipeline orchestration, sizing, 8 checks, margins, assumptions register, traceability (31); sensitivity, optimiser, analysis API (9) | 40 |
+| - | Pipeline orchestration, sizing, 8 checks, margins, assumptions register, traceability (32); sensitivity, optimiser, analysis API (9) | 41 |
 | 8 | Results dashboard (KPIs, checks, 7 graphs, cooling review, sensitivity, optimiser, trace drawer) | browser flows |
 | 9 | PDF + Excel engineering reports, report API | 28 |
 | 10 | Built-in validation cases + API (14), SciPy cross-checks (5), documentation | 19 |
-|   | **Total** | **246** |
+|   | **Total** | **247** |
 
 ---------------------------------------------------------------------------
 
@@ -107,6 +107,8 @@ Coolant: water (steam-table fits), ethylene / propylene glycol mixtures (mixing 
 * Full chain for validation case 1 with SF 1.2: `Q_design = 5.76 kW`, `ṁ = 0.338824 kg/s = 19.0 L/min`.
 * **Trace integrity** is tested for every design philosophy: every dependency named by a trace node exists, every KPI and check points at an existing node, and the selected
   philosophy's value chains back to genuine inputs (not merely to the peak instant).
+* Load definitions that would need more than 500 000 time steps (cycle samples × repeats, or a C-rate profile at a tiny step) are refused with advice (`CYCLE_TOO_LONG`);
+  the engine runs at roughly 20 000 steps per second (10 000 steps: 0.6 s, 400 000 steps: 21 s).
 * Sensitivity: one-at-a-time on 12 parameters (uses `cycle_options.load_scale`). Optimiser: grid search for minimum pump power under all constraints with
   a fast decoupled evaluator that reproduces the full pipeline exactly for constant-resistance cells.
 

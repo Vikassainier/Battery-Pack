@@ -105,7 +105,7 @@ engineering defaults are always labelled *Assumed* with a confidence; every resu
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                                   # ~250 tests, ~3 minutes
+pytest                                   # 247 tests, about 2 minutes
 python scripts/ui_smoke.py --steps "" --script scripts/ui_flow_full.py      # browser flow (Playwright + Chromium)
 ```
 
@@ -157,5 +157,6 @@ tests/  scripts/  sample_data/  docs/
 * Radiator / chiller figures are heat-rejection *requirements*; final sizing needs air-side and exchanger-design data.
 * PDF datasheet extraction depends on the layout of the document (text-based PDFs only, no OCR): that is why extraction is always reviewed and confirmed.
 * Time integration is sample-and-hold; spikes between the samples of a coarsely sampled cycle are not represented.
+* A load definition is limited to 500 000 time steps (about 138 h at 1 Hz); resample longer cycles.
 
 See report Section 16 for the complete list.

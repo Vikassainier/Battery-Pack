@@ -12,6 +12,7 @@ from typing import Iterable
 from .schemas import AnalysisRequest, CellSpec, PackConfig
 
 ERROR, WARNING, INFO = "error", "warning", "info"
+MAX_TIME_STEPS = 500_000          # guard for the load definition: ~25 s per analysis at the engine's speed of ~20 000 steps/s
 
 
 @dataclass
@@ -330,6 +331,9 @@ def validate_load(req: AnalysisRequest) -> list[Issue]:
                 add("CYCLE_MISSING_VALUES", ERROR, f"cycle.{name}", f"{name} contains missing / non-finite values.")
         if not (1 <= opt.repeats <= 200):
             add("CYCLE_REPEATS_INVALID", ERROR, "cycle_options.repeats", "Cycle repeats must be between 1 and 200.")
+        elif len(c.time_s) * opt.repeats > MAX_TIME_STEPS:
+            add("CYCLE_TOO_LONG", ERROR, "cycle.time_s", f"{len(c.time_s)} samples × {opt.repeats} repeat(s) = {len(c.time_s) * opt.repeats:,} time steps exceeds the limit of {MAX_TIME_STEPS:,}.",
+                "Resample the cycle to a coarser time step (thermal behaviour is insensitive to steps well below the thermal time constant) or shorten it.")
     if req.vehicle is not None:
         out += validate_vehicle(req.vehicle)
     p = req.crate_profile
@@ -338,6 +342,8 @@ def validate_load(req: AnalysisRequest) -> list[Issue]:
             add("CRATE_PROFILE_INVALID", ERROR, "crate_profile.dt_s", "Profile time step must be > 0 s.")
         if not p.segments:
             add("CRATE_PROFILE_INVALID", ERROR, "crate_profile.segments", "The C-rate profile has no segments.")
+        elif p.dt_s > 0 and sum(max(sg.duration_s, 0.0) for sg in p.segments) / p.dt_s > MAX_TIME_STEPS:
+            add("CYCLE_TOO_LONG", ERROR, "crate_profile.dt_s", f"The profile would need more than {MAX_TIME_STEPS:,} time steps at dt = {p.dt_s:g} s.", "Use a larger profile time step.")
         for i, s in enumerate(p.segments):
             if s.c_rate < 0 or s.duration_s <= 0:
                 add("CRATE_INVALID", ERROR, f"crate_profile.segments[{i}]", f"Segment {i + 1}: C-rate must be >= 0 and duration > 0 s.")
