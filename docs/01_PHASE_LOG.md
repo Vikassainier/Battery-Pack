@@ -15,8 +15,8 @@ the module docstrings carry the same derivations.
 | - | Pipeline orchestration, sizing, 8 checks, margins, assumptions register, traceability (32); sensitivity, optimiser, analysis API (9) | 41 |
 | 8 | Results dashboard (KPIs, checks, 7 graphs, cooling review, sensitivity, optimiser, trace drawer) | browser flows |
 | 9 | PDF + Excel engineering reports, report API | 28 |
-| 10 | Built-in validation cases + API (14), SciPy cross-checks (5), self-generating sample files (5), documentation | 24 |
-|   | **Total** | **252** |
+| 10 | Built-in validation cases + API (14), SciPy cross-checks (5), self-generating sample files (5), one-command launcher (5), documentation | 29 |
+|   | **Total** | **257** |
 
 ---------------------------------------------------------------------------
 

@@ -23,7 +23,13 @@ The calculation engine (`battery_thermal/engine`) has no dependency on the web l
 ## Quick start
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
+python scripts/run_local.py            # any OS: creates ./.venv, installs requirements, starts the server, opens the browser
+```
+
+or by hand:
+
+```bash
+python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 uvicorn battery_thermal.api.main:app --reload          # http://127.0.0.1:8000
 ```
@@ -105,7 +111,7 @@ engineering defaults are always labelled *Assumed* with a confidence; every resu
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                                   # 252 tests, about 2 minutes
+pytest                                   # 257 tests, about 2 minutes
 python scripts/ui_smoke.py --steps "" --script scripts/ui_flow_full.py      # browser flow (Playwright + Chromium)
 ```
 
