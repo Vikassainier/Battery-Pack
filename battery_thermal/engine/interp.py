@@ -143,3 +143,12 @@ class Interp2D:
         z0 = z[i][j] + fx * (z[i + 1][j] - z[i][j])
         z1 = z[i][j + 1] + fx * (z[i + 1][j + 1] - z[i][j + 1])
         return z0 + fy * (z1 - z0)
+
+    def ddy(self, x: float, y: float) -> float:
+        """Partial derivative dz/dy of the bilinear surface (slope of the y-cell containing y)."""
+        i, fx = _axis_eval(self._x, x, self.policy, self.name, self.x_axis, self.use_x)
+        j, _ = _axis_eval(self._y, y, self.policy, self.name, self.y_axis, self.use_y)
+        z = self._z
+        z0 = z[i][j] + fx * (z[i + 1][j] - z[i][j])
+        z1 = z[i][j + 1] + fx * (z[i + 1][j + 1] - z[i][j + 1])
+        return (z1 - z0) / (self._y[j + 1] - self._y[j])

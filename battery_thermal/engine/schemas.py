@@ -220,7 +220,7 @@ class ResistanceSettings(_Model):
 
 
 class EntropicSettings(_Model):
-    mode: Literal["auto", "table", "constant", "excluded"] = "auto"
+    mode: Literal["auto", "table", "map", "constant", "excluded"] = "auto"
     constant_mv_per_k: float | None = None    # user estimate of dU/dT
 
 
