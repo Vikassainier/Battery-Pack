@@ -257,7 +257,7 @@ Battery-Pack/
 │   ├── engine/      schemas units interp trace validation pack vehicle load resistance electrical heat
 │   │                simulation summary thermal coolant cooling coldplate channel pressure_drop sizing
 │   │                checks sensitivity optimizer assumptions pipeline
-│   ├── ingestion/   common datasheet drive_cycle
+│   ├── ingestion/   common datasheet drive_cycle sample_files (synthetic sample data, rebuilt on demand)
 │   ├── reporting/   charts labels text pdf_report excel_report
 │   ├── validation_cases/  cases.py (built-in hand-calculation cases)  sample_project.py (demo project)
 │   └── api/         main.py routes_ingest routes_analysis routes_report routes_validation

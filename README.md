@@ -105,7 +105,7 @@ engineering defaults are always labelled *Assumed* with a confidence; every resu
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                                   # 247 tests, about 2 minutes
+pytest                                   # 252 tests, about 2 minutes
 python scripts/ui_smoke.py --steps "" --script scripts/ui_flow_full.py      # browser flow (Playwright + Chromium)
 ```
 
@@ -116,6 +116,8 @@ python scripts/ui_smoke.py --steps "" --script scripts/ui_flow_full.py      # br
 * **Independent references.** Literature anchors for the correlations (square duct `f·Re = 56.91`, `Nu_H1 = 3.61`; parallel plates 96 / 8.235;
   Petukhov, Gnielinski), analytic step responses, conservation identities, a plain-Python re-implementation of the time-varying case,
   and **SciPy** (`solve_ivp`, `RegularGridInterpolator`, `brentq`) re-deriving the engine's integrator, interpolation and solvers.
+* **Sample data.** `sample_data/` holds the text sources; the synthetic binary samples (XLSX / PDF datasheet) and the two driving-cycle CSVs are
+  rebuilt on first use if missing (`battery_thermal/ingestion/sample_files.py`, also `python scripts/make_sample_data.py`), so a bare checkout runs and tests cleanly.
 * **Negative tests** for every error class in the specification, round-trip tests for datasheet templates, and report tests that
   check section coverage, TOC page numbers, key numbers, traceability links and workbook formulas.
 
