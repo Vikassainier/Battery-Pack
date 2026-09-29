@@ -359,3 +359,160 @@ def validate_load(req: AnalysisRequest) -> list[Issue]:
         if v is not None and v <= 0:
             add("CRATE_INVALID", ERROR, f"crate_limits.{f}", f"{f} must be > 0 s.")
     return out
+
+
+# --------------------------------------------------------------------------------------------------
+# thermal / cooling / resistance range
+# --------------------------------------------------------------------------------------------------
+def validate_thermal_cooling(req: AnalysisRequest) -> list[Issue]:
+    out: list[Issue] = []
+    add = lambda *a, **k: out.append(Issue(*a, **k))  # noqa: E731
+    th, co, cell, pack = req.thermal, req.coolant, req.cell, req.pack
+    if th.safety_factor < 1.0:
+        add("SAFETY_FACTOR_INVALID", ERROR, "thermal.safety_factor", f"Thermal safety factor {th.safety_factor:g} is below 1.0 - the design load would be under-sized.")
+    elif th.safety_factor > 3.0:
+        add("SAFETY_FACTOR_HIGH", WARNING, "thermal.safety_factor", f"Thermal safety factor {th.safety_factor:g} is very high - check for double counting of margins.")
+    if th.moving_avg_window_s is not None and th.moving_avg_window_s <= 0:
+        add("WINDOW_INVALID", ERROR, "thermal.moving_avg_window_s", "Moving-average window must be > 0 s.")
+    for f in ("cell_heat_spread_pct", "flow_maldistribution_pct"):
+        v = getattr(th, f)
+        if not (0 <= v < 100):
+            add("THERMAL_SETTING_INVALID", ERROR, f"thermal.{f}", f"{f} must be within 0-100 % (got {v}).")
+    if th.extra_thermal_mass_j_k < 0 or (th.ambient_ua_w_k is not None and th.ambient_ua_w_k < 0):
+        add("THERMAL_SETTING_INVALID", ERROR, "thermal", "Extra thermal mass and ambient conductance cannot be negative.")
+    if req.resistance.scale <= 0 or req.resistance.charge_factor <= 0:
+        add("RESISTANCE_SETTING_INVALID", ERROR, "resistance.scale", "Resistance scale factor and charge factor must be > 0.")
+
+    # coolant
+    from .cooling import CoolingError, effective_coolant_dt
+    try:
+        dt, _ = effective_coolant_dt(co)
+        if dt < 0.5:
+            add("COOLANT_DT_TINY", WARNING, "coolant.allowable_dt_k", f"Allowable coolant ΔT of {dt:g} K implies a very large flow rate.")
+        elif dt > 15:
+            add("COOLANT_DT_LARGE", WARNING, "coolant.allowable_dt_k", f"Allowable coolant ΔT of {dt:g} K will give poor cell-to-cell temperature uniformity.")
+    except CoolingError as exc:
+        add("COOLANT_DT_INVALID", ERROR, "coolant.allowable_dt_k", str(exc))
+    if co.inlet_c >= pack.t_target_max_c:
+        add("COOLANT_INLET_TOO_WARM", ERROR, "coolant.inlet_c",
+            f"Coolant inlet temperature {co.inlet_c:g} °C is not below the target maximum cell temperature {pack.t_target_max_c:g} °C - no heat can be removed.")
+    if co.max_outlet_c is not None and co.max_outlet_c > pack.t_target_max_c:
+        add("COOLANT_OUTLET_ABOVE_TARGET", WARNING, "coolant.max_outlet_c",
+            f"Maximum coolant outlet {co.max_outlet_c:g} °C is above the target cell temperature {pack.t_target_max_c:g} °C.")
+    if co.type == "custom":
+        miss = [n for n, v in (("density", co.density_kg_m3), ("specific heat", co.cp_j_kg_k), ("conductivity", co.k_w_mk), ("viscosity", co.mu_pa_s)) if v is None]
+        if miss:
+            add("COOLANT_PROPS_MISSING", ERROR, "coolant", f"Custom coolant needs all properties; missing: {', '.join(miss)}.")
+    for f, lo, hi in (("density_kg_m3", 500, 2000), ("cp_j_kg_k", 1000, 6000), ("k_w_mk", 0.05, 2.0), ("mu_pa_s", 1e-4, 0.5)):
+        v = getattr(co, f)
+        if v is not None and not (lo <= v <= hi):
+            add("COOLANT_PROP_UNREALISTIC", WARNING, f"coolant.{f}", f"Coolant {f} = {v:g} is outside the plausible range {lo:g}-{hi:g}.")
+
+    # cold plate
+    cp = req.cold_plate
+    if cp is not None:
+        for f in ("thickness_mm", "channel_width_mm", "channel_height_mm", "channel_length_mm", "cooling_area_m2", "tim_thickness_mm",
+                  "tim_k_w_mk", "cell_contact_area_m2", "contact_resistance_m2k_w"):
+            v = getattr(cp, f)
+            if v is None or v <= 0:
+                add("COLDPLATE_VALUE_INVALID", ERROR, f"cold_plate.{f}", f"{f} must be > 0 (got {v}).")
+        for f in ("n_channels", "n_plates"):
+            if getattr(cp, f) < 1:
+                add("COLDPLATE_VALUE_INVALID", ERROR, f"cold_plate.{f}", f"{f} must be >= 1.")
+        if not (0 < cp.fin_efficiency <= 1):
+            add("COLDPLATE_VALUE_INVALID", ERROR, "cold_plate.fin_efficiency", "Fin efficiency must be in (0, 1].")
+        if cp.flow_lpm is not None and cp.flow_lpm <= 0:
+            add("FLOW_INVALID", ERROR, "cold_plate.flow_lpm", "Specified coolant flow must be > 0 L/min.")
+        if cp.external_dp_kpa < 0 or cp.minor_loss_k < 0 or cp.roughness_um < 0:
+            add("COLDPLATE_VALUE_INVALID", ERROR, "cold_plate", "Loss coefficients, roughness and external pressure drop cannot be negative.")
+        if cp.material == "custom" and cp.k_plate_w_mk is None:
+            add("COLDPLATE_K_MISSING", ERROR, "cold_plate.k_plate_w_mk", "Custom plate material needs a thermal conductivity.")
+        if cp.n_plates and cp.plate_arrangement in ("series", "parallel") and pack.n_modules and cp.n_plates != pack.n_modules:
+            add("COLDPLATE_PLATE_COUNT", INFO, "cold_plate.n_plates",
+                f"{cp.n_plates} cold plate(s) for {pack.n_modules} module(s): module ΔT is estimated per plate flow path.")
+        if not _num(cell.mass_kg) or not _num(cell.cp_j_kg_k):
+            add("THERMAL_MASS_MISSING", WARNING, "cell.mass_kg",
+                "Cell mass and/or specific heat missing: the temperature prediction and Checks 1-4/6 cannot be evaluated (shown as N/A).")
+    if req.pump.overall_efficiency <= 0 or req.pump.overall_efficiency > 1:
+        add("PUMP_EFFICIENCY_INVALID", ERROR, "pump.overall_efficiency", "Pump overall efficiency must be in (0, 1].")
+    lim = req.limits
+    for a, b in (("cooling_margin_warn_pct", "cooling_margin_target_pct"), ("max_velocity_warn_m_s", "max_velocity_fail_m_s"),
+                 ("plate_dp_warn_kpa", "plate_dp_fail_kpa"), ("loop_dp_warn_kpa", "loop_dp_fail_kpa"), ("flow_warn_lpm", "flow_fail_lpm")):
+        if getattr(lim, a) > getattr(lim, b):
+            add("LIMITS_INCONSISTENT", ERROR, f"limits.{a}", f"{a} ({getattr(lim, a):g}) must not exceed {b} ({getattr(lim, b):g}).")
+    if req.installed_cooling_capacity_kw is not None and req.installed_cooling_capacity_kw < 0:
+        add("CAPACITY_INVALID", ERROR, "installed_cooling_capacity_kw", "Installed cooling capacity cannot be negative.")
+
+    # philosophy prerequisites
+    ph = th.design_philosophy
+    if ph == "sustained" and not any(x is not None for x in (req.crate_limits.cont_discharge_c, req.crate_limits.charge_c,
+                                                              cell.max_discharge_c, cell.max_charge_c)):
+        add("PHILOSOPHY_NEEDS_CRATE", ERROR, "thermal.design_philosophy",
+            "The 'sustained' philosophy needs a continuous discharge and/or charge C-rate (step 5 or the cell datasheet).")
+    if ph == "drive_cycle" and (not _num(cell.mass_kg) or not _num(cell.cp_j_kg_k)):
+        add("PHILOSOPHY_NEEDS_THERMAL_MASS", ERROR, "thermal.design_philosophy",
+            "The 'drive-cycle' philosophy needs the cell mass and specific heat (thermal mass).")
+
+    # entropic
+    if req.entropic.mode == "constant" and req.entropic.constant_mv_per_k is None:
+        add("ENTROPIC_CONSTANT_MISSING", ERROR, "entropic.constant_mv_per_k", "Entropic mode 'constant' needs a dU/dT estimate [mV/K].")
+    if req.entropic.mode == "table" and cell.dudt_vs_soc is None:
+        add("ENTROPIC_TABLE_MISSING", ERROR, "entropic.mode", "Entropic mode 'table' needs a dU/dT-vs-SOC table on the cell.")
+    if req.entropic.mode == "auto" and cell.dudt_vs_soc is None and cell.ocv_map is None and req.entropic.constant_mv_per_k is None:
+        add("ENTROPIC_DATA_MISSING", WARNING, "entropic",
+            "No dU/dT data and no estimate: reversible (entropic) heat CANNOT be calculated accurately and is left out of the result. "
+            "Enter an estimated coefficient (Thermal & cooling step) to include it, or set the mode to 'excluded' to acknowledge the omission.")
+    return out
+
+
+def validate_resistance_range(req: AnalysisRequest) -> list[Issue]:
+    """Resistance/OCV data must cover the operating window (SOC window, start temperature ... target temperature)."""
+    from .resistance import available_levels
+    out: list[Issue] = []
+    cell, pack = req.cell, req.pack
+    pol = req.resistance.extrapolation
+    sev = ERROR if pol == "block" else WARNING
+    t_lo = min(pack.t_initial_c, req.coolant.inlet_c)
+    t_hi = pack.t_target_max_c
+    soc_lo, soc_hi = min(pack.soc_min_pct, pack.soc_initial_pct), max(pack.soc_max_pct, pack.soc_initial_pct)
+    tail = ("Extrapolation is blocked - provide data for the full range or explicitly enable clamp/linear extrapolation." if pol == "block"
+            else f"Values outside will be {'held constant' if pol == 'clamp' else 'linearly extrapolated'} (explicitly enabled).")
+
+    def soc_check(name, xs):
+        if min(xs) > soc_lo or max(xs) < soc_hi:
+            out.append(Issue("RESISTANCE_RANGE", sev, f"cell.{name}",
+                             f"{name}: SOC data cover {min(xs):g}-{max(xs):g} % but the operating window is {soc_lo:g}-{soc_hi:g} %. {tail}"))
+
+    def t_check(name, ys):
+        if min(ys) > t_lo or max(ys) < t_hi:
+            out.append(Issue("RESISTANCE_RANGE", sev, f"cell.{name}",
+                             f"{name}: temperature data cover {min(ys):g}-{max(ys):g} °C but the pack operates from {t_lo:g} to {t_hi:g} °C. {tail}"))
+
+    avail = available_levels(cell)
+    if avail:
+        lvl = max(avail) if req.resistance.level == "auto" else int(req.resistance.level)
+        uses_soc, uses_t = lvl in (2, 4), lvl in (3, 4)
+        if cell.r_map is not None and lvl > 1:
+            if uses_soc:
+                soc_check("r_map", cell.r_map.x)
+            if uses_t:
+                t_check("r_map", cell.r_map.y)
+        else:
+            if uses_soc and cell.r_vs_soc is not None:
+                soc_check("r_vs_soc", cell.r_vs_soc.x)
+            if uses_t and cell.r_vs_temp is not None:
+                t_check("r_vs_temp", cell.r_vs_temp.x)
+    if cell.ocv_vs_soc is not None and cell.ocv_map is None:
+        soc_check("ocv_vs_soc", cell.ocv_vs_soc.x)
+    if cell.ocv_map is not None:
+        soc_check("ocv_map", cell.ocv_map.x)
+    if cell.capacity_vs_temp is not None:
+        t_check("capacity_vs_temp", cell.capacity_vs_temp.x)
+    return out
+
+
+def validate_request(req: AnalysisRequest) -> list[Issue]:
+    """Everything that can be checked before a single time step is computed."""
+    out = validate_cell(req.cell, req.require_cell_confirmation) + validate_pack(req.cell, req.pack)
+    out += validate_load(req) + validate_thermal_cooling(req) + validate_resistance_range(req)
+    return out

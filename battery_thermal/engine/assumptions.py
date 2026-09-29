@@ -122,6 +122,7 @@ CATALOG: dict[str, ParamMeta] = {
                                                    "0 = rotating masses neglected; typical 0.03–0.08."),
     "limits.cooling_margin_warn_pct": ParamMeta("Cooling margin: warning below", "%", "Margins", "assumed", "medium", "Configurable engineering limit."),
     "limits.cooling_margin_target_pct": ParamMeta("Cooling margin: engineering target", "%", "Margins", "assumed", "medium", "Configurable engineering limit."),
+    "limits.flow_min_lpm": ParamMeta("Minimum practical coolant flow", "L/min", "Margins", "assumed", "low", "Floor applied to the flow when the required flow is very small."),
     "limits.thermal_margin_warn_k": ParamMeta("Thermal margin: warning below", "K", "Margins", "assumed", "medium", "Configurable engineering limit."),
 }
 
@@ -189,9 +190,11 @@ def build_register(req: AnalysisRequest, computed: dict[str, tuple[Any, str]] | 
             conf = pv.confidence or ("high" if pv.source == "user" else meta.confidence)
         else:
             source_class = meta.default_source
+            if source_class == "calculated":              # a value present in the request for a normally-calculated parameter is a user override
+                source_class = "user"
             source = {"assumed": "engineering default - not confirmed by user", "user": "entered by user",
-                      "datasheet": "datasheet / user entry", "calculated": "engine correlation"}[meta.default_source]
-            conf = meta.confidence
+                      "datasheet": "datasheet / user entry"}[source_class]
+            conf = "high" if meta.default_source == "calculated" else meta.confidence
         if hasattr(value, "model_dump"):
             value = "table"
         rows.append(RegisterRow(path, meta.label, value, meta.unit, _CLASS_LABEL[source_class], source,

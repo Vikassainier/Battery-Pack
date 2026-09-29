@@ -293,7 +293,7 @@ class LimitSettings(_Model):
     loop_dp_fail_kpa: float = 200.0
     flow_warn_lpm: float = 40.0
     flow_fail_lpm: float = 100.0
-    flow_min_lpm: float = 0.5
+    flow_min_lpm: float = 2.0                 # minimum practical pack flow (pump / loop minimum); used as a floor and as a warning limit
 
 
 # --------------------------------------------------------------------------------------------------
