@@ -21,11 +21,15 @@ from ..engine.schemas import (
     PumpSpec, RadiatorSpec, ResistanceSettings, ThermalSettings,
 )
 from ..engine.validation import has_errors, validate_cell, validate_pack
+from .routes_ingest import router as ingest_router
 
 STATIC_DIR = Path(__file__).parent / "static"
 
 app = FastAPI(title="EV Battery Thermal Analysis Tool", version="0.1.0",
               description="Traceable Li-ion pack heat-generation, thermal and cooling-system sizing engine.")
+
+
+app.include_router(ingest_router)
 
 
 class ConfigCheck(BaseModel):

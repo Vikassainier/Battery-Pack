@@ -1,0 +1,68 @@
+# SYNTHETIC ILLUSTRATIVE DATA for software testing only - NOT a real product datasheet. Do not use for design decisions.
+Parameter,Value,Unit,Notes
+Cell name / part number,SYN-LFP-100Ah (synthetic),,illustrative
+Chemistry,LFP,,
+Cell type,prismatic,,
+Nominal capacity,100,Ah,@ 0.5C 25 °C
+Nominal voltage,3.2,V,
+Maximum voltage,3.65,V,charge cut-off
+Minimum voltage,2.5,V,discharge cut-off
+DC internal resistance (DCIR),0.52,mΩ,@ 25 °C 50 % SOC 10 s pulse
+AC impedance (1 kHz),0.28,mΩ,information only
+Max continuous discharge current,1,C,
+Max continuous charge current,0.5,C,
+Pulse discharge current,2,C,10 s
+Pulse charge current,1,C,10 s
+Length,174,mm,
+Width,71,mm,
+Height,207,mm,
+Cell mass,2.05,kg,
+Operating temperature (discharge),-20 ~ 60,°C,
+Operating temperature (charge),0 ~ 55,°C,
+Recommended temperature,15 ~ 35,°C,
+
+[R_vs_SOC]
+SOC (%),R_DC (mΩ) @25°C
+0,0.85
+10,0.66
+20,0.58
+30,0.55
+50,0.52
+70,0.52
+90,0.55
+100,0.62
+
+[R_vs_T]
+Temperature (°C),R_DC (mΩ) @50% SOC
+-10,1.85
+0,1.15
+10,0.78
+25,0.52
+40,0.41
+55,0.36
+
+[OCV_vs_SOC]
+SOC (%),OCV (V)
+0,2.90
+5,3.14
+10,3.22
+20,3.26
+30,3.29
+40,3.30
+50,3.31
+60,3.32
+70,3.33
+80,3.34
+90,3.36
+95,3.38
+100,3.42
+
+[Capacity_vs_T]
+Temperature (°C),Capacity (% of nominal)
+-20,68
+-10,80
+0,90
+10,96
+25,100
+45,102
+60,102

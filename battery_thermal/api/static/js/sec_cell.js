@@ -1,6 +1,7 @@
 // Steps 1-2 - Cell datasheet: ingestion (Phase 2) and the review/confirm table (Phase 1 baseline).
-import { state, getPath, setValue, prov, save } from './state.js';
+import { state, getPath, setPath, setValue, prov, save } from './state.js';
 import { api } from './api.js';
+import { go } from './app.js';
 import { h, card, chip, toast, fmt, issuesList, plot, plotDiv, table } from './ui.js';
 import { CELL_GROUPS, CELL_CURVES, CELL_MAPS, REQUIRED_CELL } from './schema_ui.js';
 
@@ -113,8 +114,93 @@ export function renderCellConfirm(root) {
   root.append(box);
 }
 
+/** Replace the cell with the parser's *proposal*. Values stay unconfirmed until the user reviews them (step 2). */
+function applyExtraction(res) {
+  state.ui.extraction = res;
+  for (const k of Object.keys(state.provenance)) if (k.startsWith('cell.')) delete state.provenance[k];
+  state.cell = { confirmed: false };
+  for (const [path, f] of Object.entries(res.fields)) {
+    setPath(state, path, f.value);
+    state.provenance[path] = { source: 'datasheet', confidence: f.confidence, note: [f.note, f.location].filter(Boolean).join(' · ') };
+  }
+  for (const [key, c] of Object.entries(res.curves)) {
+    state.cell[key] = { x: c.x, y: c.y, x_label: c.x_label, y_label: c.y_label };
+    state.provenance[`cell.${key}`] = { source: 'datasheet', confidence: c.confidence, note: [c.note, c.location].filter(Boolean).join(' · ') };
+  }
+  for (const [key, m] of Object.entries(res.maps)) {
+    state.cell[key] = { x: m.x, y: m.y, z: m.z, x_label: 'SOC [%]', y_label: 'T [°C]', z_label: m.z_label };
+    state.provenance[`cell.${key}`] = { source: 'datasheet', confidence: m.confidence, note: [m.note, m.location].filter(Boolean).join(' · ') };
+  }
+  save();
+}
+
+function missingPanel(res, rerender) {
+  if (!res.missing.length) return null;
+  const rows = res.missing.map(m => {
+    const s = m.suggestion;
+    const scalar = m.path.split('.').length === 2 && !['cell.ocv_vs_soc', 'cell.dudt_vs_soc'].includes(m.path);
+    return [
+      h('div', {}, m.label, m.note ? h('div', { class: 'help' }, m.note) : null),
+      m.required ? chip('required', 'missing') : chip('recommended', 'info'),
+      s ? h('div', {}, h('b', {}, `${fmt(s.value)} ${s.unit}`), ' ', chip(s.confidence + ' confidence', s.confidence), h('div', { class: 'help' }, s.rationale))
+        : h('span', { class: 'muted' }, m.path === 'cell.r_dc_mohm' ? 'No default offered - the tool never invents a resistance.' : 'Ask the customer / enter manually'),
+      s && scalar ? h('button', { class: 'btn small', onclick: () => {
+        setValue(m.path, s.value, 'assumed', s.confidence, `engineering assumption: ${s.rationale}`); toast('Assumption recorded (flagged in the assumptions register)'); rerender();
+      } }, 'Accept as assumption') : null,
+    ];
+  });
+  return card('Parameters not found in the datasheet',
+    'Missing values are never filled in silently. Provide them on step 2, or explicitly accept an engineering assumption (it will be flagged as Assumed / low confidence).',
+    table(['Parameter', 'Need', 'Available suggestion', ''], rows));
+}
+
 export function renderCellUpload(root) {
+  const out = h('div');
+  const rerender = () => { root.replaceChildren(); renderCellUpload(root); };
+
+  const handle = async (promise, label) => {
+    out.replaceChildren(h('span', { class: 'spinner' }), ` Parsing ${label}…`);
+    try {
+      const res = await promise;
+      applyExtraction(res);
+      toast(`Extracted ${Object.keys(res.fields).length} values, ${Object.keys(res.curves).length} curves, ${Object.keys(res.maps).length} maps - please review`);
+      rerender();
+    } catch (e) { out.replaceChildren(h('div', { class: 'banner error' }, `Could not read the file: ${e.message}`)); }
+  };
+  const upload = file => { const fd = new FormData(); fd.append('file', file); handle(api('/api/datasheet/parse', { form: fd }), file.name); };
+
+  const fileInput = h('input', { type: 'file', accept: '.pdf,.xlsx,.csv,.txt', style: 'display:none', onchange: e => e.target.files[0] && upload(e.target.files[0]) });
+  const drop = h('div', { class: 'drop', onclick: () => fileInput.click() },
+    h('div', { style: 'font-size:16px;font-weight:600' }, 'Drop the cell datasheet here, or click to browse'),
+    h('div', { class: 'muted' }, 'PDF (text-based), Excel (.xlsx) or CSV · values and curves are extracted as a proposal for you to review'));
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]); });
+
   root.append(h('h1', {}, '1 · Cell datasheet'),
-    h('div', { class: 'banner' }, 'Datasheet upload (PDF / Excel / CSV) is added in Phase 2. You can already enter cell parameters manually on step 2.'),
-    h('button', { class: 'btn primary', onclick: () => document.querySelector('#nav [data-step=confirm]').click() }, 'Enter / review cell parameters →'));
+    card('Project', null, h('div', { class: 'grid' },
+      ...[['name', 'Project name'], ['customer', 'Customer'], ['project_no', 'Project no.'], ['engineer', 'Engineer'], ['revision', 'Revision']].map(([k, l]) =>
+        h('label', { class: 'f' }, h('span', { class: 'lab' }, l),
+          h('input', { value: state.project[k] || '', onchange: e => { state.project[k] = e.target.value; save(); } }))))),
+    card('Upload datasheet', 'Nothing extracted is trusted blindly - every value is shown for review, editing and confirmation before any calculation.',
+      drop, fileInput,
+      h('div', { class: 'row', style: 'margin-top:10px;align-items:center' },
+        h('div', {}, h('a', { href: '/api/templates/datasheet.csv' }, 'CSV template'), ' · ', h('a', { href: '/api/templates/datasheet.xlsx' }, 'Excel template'),
+          ' · sample (synthetic test data): ',
+          h('a', { href: '#', onclick: e => { e.preventDefault(); handle(api('/api/samples/cell_datasheet_LFP100Ah.csv/parse-datasheet', { json: {} }), 'sample CSV'); } }, 'CSV'), ' / ',
+          h('a', { href: '#', onclick: e => { e.preventDefault(); handle(api('/api/samples/cell_datasheet_LFP100Ah.xlsx/parse-datasheet', { json: {} }), 'sample Excel'); } }, 'Excel'), ' / ',
+          h('a', { href: '#', onclick: e => { e.preventDefault(); handle(api('/api/samples/cell_datasheet_LFP100Ah.pdf/parse-datasheet', { json: {} }), 'sample PDF'); } }, 'PDF')),
+        h('div', { style: 'text-align:right' }, h('button', { class: 'btn', onclick: () => go('confirm') }, 'Skip: enter values manually →')))),
+    out);
+
+  const ex = state.ui.extraction;
+  if (ex) {
+    out.append(card(`Extraction result - ${ex.source_name}`, `${ex.source_type.toUpperCase()} · ${Object.keys(ex.fields).length} values, ${Object.keys(ex.curves).length} curves, ${Object.keys(ex.maps).length} maps`,
+      h('div', { class: 'row' }, h('div', {}, h('h4', {}, 'Extracted'), table(['Parameter', 'Value', 'Confidence'],
+        Object.entries(ex.fields).map(([p, f]) => [p.replace('cell.', ''), `${fmt(f.value, 5)} ${f.unit}`, chip(f.confidence, f.confidence)]), { scroll: true })),
+        h('div', {}, h('h4', {}, 'Notes from the parser'), issuesList(ex.issues))),
+      h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn primary', onclick: () => go('confirm') }, 'Review & confirm the values →'))));
+    const mp = missingPanel(ex, rerender);
+    if (mp) out.append(mp);
+  }
 }
