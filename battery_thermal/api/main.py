@@ -15,7 +15,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from ..engine.assumptions import assumed_default_paths, catalog_dict
+from ..engine.coolant import CoolantError, coolant_properties
+from ..engine.cooling import CoolingError, effective_coolant_dt
 from ..engine.pack import ConfigError, derive_pack
+from ..engine.resistance import available_levels
+from ..engine.sizing import PEAK_VS_SUSTAINED, PHILOSOPHY_LABEL, PHILOSOPHY_TEXT
 from ..engine.schemas import (
     CellSpec, ColdPlateSpec, CoolantSpec, CycleOptions, EntropicSettings, LimitSettings, PackConfig,
     PumpSpec, RadiatorSpec, ResistanceSettings, ThermalSettings,
@@ -87,7 +91,36 @@ def defaults():
         "cold_plate": ColdPlateSpec().model_dump(),
         "assumed_paths": assumed_default_paths(),
         "catalog": catalog_dict(),
+        "philosophy": {"labels": PHILOSOPHY_LABEL, "texts": PHILOSOPHY_TEXT, "peak_vs_sustained": PEAK_VS_SUSTAINED},
     }
+
+
+class CoolantPreview(BaseModel):
+    coolant: CoolantSpec
+    t_c: float | None = None
+
+
+@app.post("/api/coolant/properties")
+def coolant_preview(body: CoolantPreview):
+    """Live coolant properties (mean coolant temperature by default) for the input form."""
+    try:
+        dt, why = effective_coolant_dt(body.coolant)
+    except CoolingError as exc:
+        dt, why = None, str(exc)
+    t = body.t_c if body.t_c is not None else body.coolant.inlet_c + (dt or 5.0) / 2.0
+    try:
+        return {"ok": True, "props": coolant_properties(body.coolant, t).to_dict(), "dt_k": dt, "dt_basis": why}
+    except CoolantError as exc:
+        return {"ok": False, "message": str(exc)}
+
+
+class LevelsQuery(BaseModel):
+    cell: CellSpec
+
+
+@app.post("/api/resistance/levels")
+def resistance_levels(body: LevelsQuery):
+    return {"available_levels": available_levels(body.cell)}
 
 
 @app.get("/vendor/plotly.min.js")

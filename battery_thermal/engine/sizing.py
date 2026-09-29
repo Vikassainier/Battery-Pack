@@ -45,7 +45,8 @@ PEAK_VS_SUSTAINED = (
 )
 
 
-def design_load(philosophy: str, cands: dict[str, dict], sf: float, q_amb_gain_w: float, tr: TraceLog | None = None) -> dict:
+def design_load(philosophy: str, cands: dict[str, dict], sf: float, q_amb_gain_w: float, tr: TraceLog | None = None,
+                sf_source: str = "assumed", amb_inputs: list[str] | None = None) -> dict:
     """Combine the candidate loads into the required/design capacity."""
     sel = cands[philosophy]
     if not sel.get("available"):
@@ -60,10 +61,11 @@ def design_load(philosophy: str, cands: dict[str, dict], sf: float, q_amb_gain_w
     if tr is not None:
         tr.calc("design.q_relevant", f"Relevant heat load ({PHILOSOPHY_LABEL[philosophy]})", q_rel / 1e3, "kW", "Q_relevant = " + PHILOSOPHY_TEXT[philosophy].split(":")[0][:80],
                 sel.get("substitution", ""), sel.get("trace_inputs", []), note=sel.get("note", ""))
-        tr.calc("design.q_amb", "Ambient heat gain at target temperature", gain / 1e3, "kW", "Q_amb = UA·max(0, T_amb − T_target)", "", [])
+        tr.calc("design.q_amb", "Ambient heat gain at target temperature", gain / 1e3, "kW", "Q_amb = UA·max(0, T_amb − T_target)", "",
+                amb_inputs or [], note="0 for the drive-cycle philosophy: ambient exchange is already inside the transient simulation" if philosophy == "drive_cycle" else "")
         tr.result("design.q_required", "Required cooling capacity", q_req / 1e3, "kW", "Q_required = Q_relevant + Q_ambient-gain",
                   f"{fmt(q_rel / 1e3)} + {fmt(gain / 1e3)}", ["design.q_relevant", "design.q_amb"])
-        tr.input("design.sf", "Thermal safety factor", sf, "-", "assumed")
+        tr.input("design.sf", "Thermal safety factor", sf, "-", sf_source)
         tr.result("design.q_design", "Design (recommended) cooling capacity", q_des / 1e3, "kW", "Q_design = Q_required × SF",
                   f"{fmt(q_req / 1e3)} × {fmt(sf)}", ["design.q_required", "design.sf"])
     return out
@@ -108,8 +110,10 @@ def radiator_estimate(q_design_w: float, p_hyd_w: float, t_in_c: float, dt_cool_
     out["passive_feasible"] = bool(approach >= RADIATOR_APPROACH_K and (out["effectiveness_required"] or 1) < 0.8)
     notes = []
     if approach < RADIATOR_APPROACH_K:
-        notes.append(f"The coolant must be supplied at {t_in_c:.1f} °C, only {approach:.1f} K above the {t_amb_c:.1f} °C ambient (< {RADIATOR_APPROACH_K:g} K approach): "
-                     "a radiator alone cannot deliver this - an active refrigeration circuit (chiller) is required.")
+        rel = f"{abs(approach):.1f} K {'below' if approach < 0 else 'above'}"
+        notes.append(f"The specified coolant supply temperature of {t_in_c:.1f} °C is {rel} the {t_amb_c:.1f} °C ambient (a radiator needs at least "
+                     f"{RADIATOR_APPROACH_K:g} K approach): a radiator alone cannot deliver it - an active refrigeration circuit (chiller) is required, "
+                     "or a warmer supply temperature must be accepted (see the recommended maximum inlet temperature).")
     elif out["effectiveness_required"] is not None and out["effectiveness_required"] >= 0.8:
         notes.append(f"Required radiator effectiveness {out['effectiveness_required']:.2f} is very high: expect a large radiator or a chiller.")
     notes.append("Air-side assumptions: air enters at the ambient temperature, air temperature rise "

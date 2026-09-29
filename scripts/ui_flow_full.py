@@ -1,0 +1,28 @@
+def run(page, base, shots, errors):
+    page.get_by_role("button", name="Load sample project").click()
+    page.wait_for_selector("text=Readiness")
+    page.get_by_role("button", name="▶ Run analysis").click()
+    page.wait_for_selector("text=Key results", timeout=30000)
+    page.wait_for_timeout(1200)
+    page.screenshot(path=f"{shots}/f_dashboard.png", full_page=True)
+    # trace drawer from a KPI
+    page.locator(".kpi", has_text="Required cooling capacity").click()
+    page.wait_for_selector("#drawer.open .tnode")
+    page.wait_for_timeout(300)
+    page.screenshot(path=f"{shots}/f_trace.png")
+    page.click("#drawer-close")
+    for step, marker, name in [("heat", "Graph 7", "f_heat"), ("coolreq", "Cooling system sizing", "f_cooling"), ("assump", "Assumptions & data quality", "f_assump"),
+                               ("trace", "Key results", "f_traceindex"), ("cooling", "Design heat-load philosophy", "f_params")]:
+        page.click(f"#nav [data-step={step}]")
+        page.wait_for_selector(f"text={marker}", timeout=15000)
+        page.wait_for_timeout(1000)
+        page.screenshot(path=f"{shots}/{name}.png", full_page=True)
+    page.click("#nav [data-step=sens]")
+    page.get_by_role("button", name="▶ Run sensitivity analysis").click()
+    page.wait_for_selector("text=Tornado charts", timeout=60000)
+    page.wait_for_timeout(1000)
+    page.screenshot(path=f"{shots}/f_sens.png", full_page=True)
+    page.click("#nav [data-step=optimize]")
+    page.get_by_role("button", name="▶ Search for better designs").click()
+    page.wait_for_selector("text=Search result", timeout=60000)
+    page.screenshot(path=f"{shots}/f_optimize.png", full_page=True)

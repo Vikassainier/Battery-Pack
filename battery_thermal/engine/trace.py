@@ -63,6 +63,13 @@ class TraceLog:
                inputs: Iterable[str] = (), note: str = "") -> str:
         return self.calc(id, label, value, unit, formula, substitution, inputs, note, kind="result")
 
+    def set_source(self, id: str, source: str) -> None:
+        """Re-label the provenance of an existing input node (user | datasheet | assumed | calculated)."""
+        n = self.nodes.get(id)
+        if n is not None and n.kind in ("input", "assumption"):
+            n.source = source
+            n.kind = "assumption" if source == "assumed" else "input"
+
     # -- querying -----------------------------------------------------------------------------
     def get(self, id: str) -> TraceNode | None:
         return self.nodes.get(id)

@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, Response
 from ..ingestion.common import IngestionError
 from ..ingestion.datasheet import datasheet_template_csv, datasheet_template_xlsx, parse_datasheet
 from ..ingestion.drive_cycle import parse_drive_cycle
+from ..validation_cases.sample_project import sample_project_state
 
 router = APIRouter(prefix="/api", tags=["ingestion"])
 
@@ -43,6 +44,12 @@ def list_samples():
     if not SAMPLE_DIR.exists():
         return []
     return sorted(p.name for p in SAMPLE_DIR.iterdir() if p.is_file())
+
+
+@router.get("/sample-project")
+def sample_project():
+    """A complete example project (synthetic data, every non-datasheet value flagged as an assumed example value)."""
+    return sample_project_state()
 
 
 @router.get("/samples/{name}")

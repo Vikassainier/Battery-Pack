@@ -146,6 +146,7 @@ def run_analysis(req: AnalysisRequest, *, mode: str = "full", _artefacts: dict |
         return blocked(req, issues)
 
     t, q0 = sim0.t, sim0.q_pack
+    _register_inputs(tr, req, pack, rmodel, c_pack, ua, ua_src)
 
     def candidates(q_series: np.ndarray, network: ThermalNetwork | None) -> dict[str, dict]:
         peak_i = int(np.argmax(q_series))
@@ -155,7 +156,7 @@ def run_analysis(req: AnalysisRequest, *, mode: str = "full", _artefacts: dict |
         window = w_user if w_user is not None else DEFAULT_MA_WINDOW_S
         v, tt, wu = moving_average_peak(t, q_series, window)
         c["moving_average"] = {"available": True, "value_w": v, "t_s": tt, "window_s": wu, "window_source": "user" if w_user is not None else "default",
-                               "substitution": f"max over t of (1/{wu:.0f} s)·∫Q dt = {fmt(v / 1e3)} kW at t = {tt:.0f} s", "trace_inputs": ["heat.q_pack_pk"]}
+                               "substitution": f"max over t of (1/{wu:.0f} s)·∫Q dt = {fmt(v / 1e3)} kW at t = {tt:.0f} s", "trace_inputs": ["heat.q_series"]}
         # sustained: steady-state heat at the rated continuous currents
         try:
             cap = cell.capacity_ah
@@ -176,7 +177,7 @@ def run_analysis(req: AnalysisRequest, *, mode: str = "full", _artefacts: dict |
                 key = max(parts, key=lambda k: parts[k]["q_pack_w"])
                 c["sustained"] = {"available": True, "value_w": parts[key]["q_pack_w"], "governing": key, "parts": parts,
                                   "substitution": f"N·I²·R at {parts[key]['c_rate']:g} C ({key}), worst case SOC {parts[key]['soc_pct']:.0f} %, T = {t_tgt:g} °C → {fmt(parts[key]['q_pack_w'] / 1e3)} kW",
-                                  "trace_inputs": []}
+                                  "trace_inputs": ["in.cell_cap", "pack.n_cells", "in.t_target", "in.r_data"]}
             else:
                 c["sustained"] = {"available": False, "value_w": 0.0, "note": "no continuous C-rate defined"}
         except OutOfRangeError as exc:
@@ -186,7 +187,7 @@ def run_analysis(req: AnalysisRequest, *, mode: str = "full", _artefacts: dict |
             dc = required_capacity_drive_cycle(t, q_series, c_pack, t0, t_tgt, min(t0, t_in), ua, t_amb)
             c["drive_cycle"] = {"available": dc["feasible"], "value_w": dc["q_cap_w"] if dc["feasible"] else 0.0, "detail": {k: v for k, v in dc.items() if k not in ("removal_w", "t_c")},
                                 "note": dc["note"], "substitution": f"bisection on constant capacity: T_max = {dc['t_max_at_cap_c']:.2f} °C ≤ {t_tgt:g} °C (no cooling: {dc['t_max_no_cooling_c']:.1f} °C)",
-                                "trace_inputs": []}
+                                "trace_inputs": ["heat.q_series", "th.c_pack", "in.t_initial", "in.t_target", "in.t_in", "th.ua", "in.t_amb"]}
             if dc["feasible"]:
                 c["drive_cycle"]["removal_w"] = dc.get("removal_w")
         else:
@@ -209,7 +210,8 @@ def run_analysis(req: AnalysisRequest, *, mode: str = "full", _artefacts: dict |
     _register_heat_trace(tr, sim0, pack, rmodel, ent, req)          # the heat-chain trace is needed by the design-load nodes
     try:
         for n_iter in range(1, MAX_ITER + 1):
-            dl = design_load(th.design_philosophy, candidates(q_series, network), th.safety_factor, q_gain, tr)
+            dl = design_load(th.design_philosophy, candidates(q_series, network), th.safety_factor, q_gain, tr,
+                             _src(req, "thermal.safety_factor"), ["th.ua", "in.t_amb", "in.t_target"])
             fr = flow_requirements(dl["q_design_w"], N, pack.cells_per_module, props, dt_cool, tr, "design.q_design")
             if plate_ok:
                 m_actual = lpm_to_kgs(plate.flow_lpm, props.rho) if plate.flow_lpm else max(fr["pack"]["m_dot_kg_s"], m_min)
@@ -383,6 +385,7 @@ def run_analysis(req: AnalysisRequest, *, mode: str = "full", _artefacts: dict |
         _artefacts.update(sim=sim, props=props, ua=ua, c_pack=c_pack, t_in=t_in, t_amb=t_amb, t_tgt=t_tgt, pack=pack, plate=plate, dt_cool=dt_cool,
                           m_actual=m_actual, dl=dl, has_t=has_t)
     if full:
+        _apply_trace_sources(tr, req)
         result["trace"] = tr.to_dict()
         result["series"] = _series(sim, load, t_hot, dt_pack, dt_mod, uncooled, pack)
         result["load"] = load_summary(load, 3000)
@@ -390,6 +393,35 @@ def run_analysis(req: AnalysisRequest, *, mode: str = "full", _artefacts: dict |
 
 
 # ==================================================================================================
+def _register_inputs(tr: TraceLog, req: AnalysisRequest, pack, rmodel, c_pack, ua, ua_src) -> None:
+    cell, pk, co = req.cell, req.pack, req.coolant
+    tr.input("in.t_initial", "Initial battery temperature", pk.t_initial_c, "°C", _src(req, "pack.t_initial_c"))
+    tr.input("in.t_target", "Target max cell temperature", pk.t_target_max_c, "°C", _src(req, "pack.t_target_max_c"))
+    tr.input("in.t_amb", "Ambient temperature", pk.t_ambient_c, "°C", _src(req, "pack.t_ambient_c"))
+    tr.input("in.t_in", "Coolant inlet temperature", co.inlet_c, "°C", _src(req, "coolant.inlet_c"))
+    tr.input("in.r_data", "Cell resistance data", cell.r_dc_mohm if rmodel.level == 1 else None, "mΩ" if rmodel.level == 1 else "",
+             _src(req, "cell.r_dc_mohm"), note=rmodel.description)
+    if cell.mass_kg is not None and cell.cp_j_kg_k is not None:
+        tr.input("in.cell_mass", "Cell mass", cell.mass_kg, "kg", _src(req, "cell.mass_kg"))
+        tr.input("in.cell_cp", "Cell specific heat", cell.cp_j_kg_k, "J/(kg·K)", _src(req, "cell.cp_j_kg_k"))
+        if c_pack is not None:
+            tr.calc("th.c_pack", "Pack thermal capacity", c_pack, "J/K", "C = N·m_cell·cp + C_extra",
+                    f"{pack.n_cells} × {fmt(cell.mass_kg)} × {fmt(cell.cp_j_kg_k)} + {fmt(req.thermal.extra_thermal_mass_j_k)}", ["pack.n_cells", "in.cell_mass", "in.cell_cp"])
+    tr.input("th.ua", "Pack-to-ambient conductance UA", ua, "W/K", "user" if ua_src == "user" else "assumed",
+             note="" if ua_src == "user" else "estimated from cell volume, fill fraction 0.4, flat-pack shape factor 7 and external h")
+
+
+_TRACE_SOURCES = {"in.ns": "pack.ns", "in.np": "pack.np", "in.cell_vnom": "cell.v_nom", "in.cell_cap": "cell.capacity_ah",
+                  "cp.t_tim": "cold_plate.tim_thickness_mm", "cp.k_tim": "cold_plate.tim_k_w_mk", "cp.rc": "cold_plate.contact_resistance_m2k_w",
+                  "cp.t_plate": "cold_plate.thickness_mm", "cp.a_cell": "cold_plate.cell_contact_area_m2", "hyd.dp_ext": "cold_plate.external_dp_kpa"}
+
+
+def _apply_trace_sources(tr: TraceLog, req: AnalysisRequest) -> None:
+    """Give trace inputs the provenance the user/datasheet/assumption register assigns to the underlying parameter."""
+    for node_id, path in _TRACE_SOURCES.items():
+        tr.set_source(node_id, _src(req, path))
+
+
 def ocv_usage(ocv: OcvModel) -> list[dict]:
     out = []
     for tb in ocv.tables:
@@ -469,6 +501,8 @@ def _register_heat_trace(tr: TraceLog, sim: SimResult, pack, rmodel, ent, req: A
     tr.result("heat.q_cell_pk", "Total cell heat at peak", float(sim.q_cell[i]), "W", "Q_cell = Q_joule + Q_rev", f"{fmt(sim.q_joule_cell[i])} + {fmt(sim.q_rev_cell[i])}", ["heat.q_joule_pk", "heat.q_rev_pk"])
     tr.result("heat.q_module_pk", "Module heat at peak", float(sim.q_module[i]), "W", "Q_module = cells_per_module · Q_cell", f"{pack.cells_per_module} × {fmt(sim.q_cell[i])}", ["heat.q_cell_pk"])
     tr.result("heat.q_pack_pk", "Maximum pack heat", float(sim.q_pack[i] / 1e3), "kW", "Q_pack = Ns·Np·Q_cell  (= Ns·Np·I_cell²·R + reversible)", f"{pack.ns} × {pack.np} × {fmt(sim.q_cell[i])} / 1000", ["heat.q_cell_pk", "in.ns", "in.np"])
+    tr.calc("heat.q_series", "Pack heat time series Q_pack(t)", None, "", "Q_pack,k = Ns·Np·(I_cell,k²·R_k(SOC_k,T_k) − I_cell,k·T_k·dU/dT_k)",
+            f"evaluated at each of the {len(sim.t)} samples; the peak instant is expanded above", ["heat.q_cell_pk", "in.ns", "in.np"])
     tr.calc("heat.c_max", "Maximum C-rate", float(np.abs(sim.c_rate).max()), "C", "C-rate = I_cell / C_cell", f"{fmt(np.abs(sim.i_cell).max())} / {fmt(pack.cell_capacity_ah)}", ["in.cell_cap"])
     if summ:
         tr.result("heat.q_pack_avg", "Average pack heat", summ["avg_pack_heat_kw"], "kW", "Q_avg = Σ Q_pack,k·Δt_k / T_cycle", f"{fmt(summ['total_heat_kwh'] * 3600)} MJ / {fmt(summ['duration_s'])} s", ["heat.q_pack_pk"])

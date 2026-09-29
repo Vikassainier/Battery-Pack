@@ -1,5 +1,5 @@
 // Application shell: workflow navigation, top bar, project save/load. Sections are lazy-loaded modules.
-import { state, restore, save, mergeDefaults, loadProject, exportProject } from './state.js';
+import { state, restore, save, applyDefaults, loadProject, exportProject } from './state.js';
 import { api } from './api.js';
 import { h, toast } from './ui.js';
 
@@ -59,6 +59,9 @@ function renderTopbar() {
     try { loadProject(JSON.parse(await f.text())); toast('Project loaded'); go(state.ui.step); } catch (err) { toast('Invalid project file', 'error'); }
   } });
   bar.replaceChildren(h('span', { class: 'title' }, 'Project'), name, h('span', { class: 'spacer' }),
+    h('button', { class: 'btn small', onclick: async () => {
+      try { loadProject(await api('/api/sample-project')); state.ui.extraction = null; state.ui.cycleMeta = null; toast('Sample project loaded (synthetic data)'); renderTopbar(); go('run'); } catch (e) { toast(e.message, 'error'); }
+    } }, 'Load sample project'),
     h('button', { class: 'btn small', onclick: () => file.click() }, 'Open project…'), file,
     h('button', { class: 'btn small', onclick: () => {
       const a = h('a', { href: URL.createObjectURL(new Blob([exportProject()], { type: 'application/json' })), download: `${state.project.name.replace(/\W+/g, '_')}.json` });
@@ -89,9 +92,9 @@ async function boot() {
   restore();
   try {
     const d = await api('/api/defaults');
-    mergeDefaults(d.groups);
-    state.ui.assumedPaths = d.assumed_paths; state.ui.catalog = d.catalog; state.ui.coldPlateDefaults = d.cold_plate;
-    for (const p of d.assumed_paths) if (!state.provenance[p] && p.split('.').reduce((o, k) => (o == null ? undefined : o[k]), state) != null) state.provenance[p] = { source: 'assumed' };
+    state.ui.defaults = d;
+    state.ui.assumedPaths = d.assumed_paths; state.ui.catalog = d.catalog; state.ui.coldPlateDefaults = d.cold_plate; state.ui.philosophy = d.philosophy;
+    applyDefaults();
     state.ui.defaultsLoaded = true;
   } catch (e) { toast(`Could not load defaults: ${e.message}`, 'error'); }
   save();

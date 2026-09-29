@@ -33,6 +33,7 @@ export function setValue(path, value, source = 'user', confidence = null, note =
   setPath(state, path, value);
   state.provenance[path] = { source, confidence, note };
   if (path.startsWith('cell.') && path !== 'cell.confirmed') state.cell.confirmed = false; // any edit requires re-confirmation
+  if (state.ui.result) state.ui.stale = true;
   save();
 }
 export function prov(path) { return state.provenance[path] || null; }
@@ -81,9 +82,18 @@ export function restore() {
     return true;
   } catch (e) { return false; }
 }
+export function applyDefaults() {
+  // (Re)apply the server defaults after a project is loaded: missing generic settings get their defaults, flagged as assumed.
+  const d = state.ui.defaults;
+  if (!d) return;
+  mergeDefaults(d.groups);
+  for (const p of d.assumed_paths) if (!state.provenance[p] && getPath(state, p) != null) state.provenance[p] = { source: 'assumed' };
+}
+
 export function loadProject(obj) {
   for (const [k, v] of Object.entries(obj)) if (k !== 'ui') state[k] = v;
-  state.ui.result = null; state.ui.sens = null; state.ui.opt = null;
+  state.ui.result = null; state.ui.sens = null; state.ui.opt = null; state.ui.stale = false;
+  applyDefaults();
   save();
 }
 export function exportProject() {

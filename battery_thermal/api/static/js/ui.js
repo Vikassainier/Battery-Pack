@@ -42,7 +42,8 @@ export function table(headers, rows, opts = {}) {
   const num = opts.num || [];
   const t = h('table', { class: 't' },
     h('thead', {}, h('tr', {}, headers.map((c, i) => h('th', { class: num.includes(i) ? 'num' : '' }, c)))),
-    h('tbody', {}, rows.map(r => h('tr', {}, r.map((c, i) => h('td', { class: num.includes(i) ? 'num' : '' }, c))))));
+    h('tbody', {}, rows.map((r, ri) => h('tr', { class: opts.rowClick ? 'clickable' : '', onclick: opts.rowClick ? () => opts.rowClick(ri) : null },
+      r.map((c, i) => h('td', { class: num.includes(i) ? 'num' : '' }, c))))));
   return h('div', { class: opts.scroll ? 'scroll' : '' }, t);
 }
 

@@ -4,8 +4,8 @@ Searches cold-plate / flow variants for the lowest pump power that still satisfi
 constraints. The heat series from the base run is held fixed (temperature feedback on resistance neglected), so each
 candidate needs only the cold-plate model, the hydraulics and the lumped thermal integration - a few milliseconds.
 
-Constraints (all configurable through the request): hottest-cell temperature ≤ target (with the thermal-margin
-warning band), cell-to-cell ΔT ≤ target, coolant outlet ≤ limit, plate ΔP, loop ΔP, channel velocity.
+Constraints (all configurable through the request): hottest-cell temperature ≤ target, cell-to-cell ΔT ≤ target, coolant
+outlet ≤ limit, plate ΔP, loop ΔP, channel velocity between 0.05 m/s and the warning limit, flow ≥ the minimum practical flow.
 """
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from .schemas import AnalysisRequest, ColdPlateSpec
 from .thermal import ThermalNetwork, cell_to_cell_dt, thermal_step
 from .units import kgs_to_lpm, lpm_to_kgs
 
+MIN_VELOCITY_M_S = 0.05        # below this the channels are prone to air entrapment / poor distribution
 VARIABLES = {"flow_lpm": "Coolant flow", "channel_height_mm": "Channel height", "channel_width_mm": "Channel width",
              "n_channels": "Number of channels", "tim_thickness_mm": "TIM thickness"}
 
@@ -52,7 +53,9 @@ def _evaluate(req: AnalysisRequest, art: dict, plate: ColdPlateSpec, flow_lpm: f
     viol = {"t_hot": max(0.0, t_hot_max - req.pack.t_target_max_c), "dt_pack": max(0.0, dt_pack_max - req.pack.target_delta_t_k),
             "t_out": max(0.0, t_out_max - out_limit), "dp_plate": max(0.0, hyd.dp_plates_total_pa / 1e3 - lim.plate_dp_warn_kpa) / lim.plate_dp_warn_kpa,
             "dp_loop": max(0.0, hyd.dp_total_pa / 1e3 - lim.loop_dp_warn_kpa) / lim.loop_dp_warn_kpa,
-            "velocity": max(0.0, hyd.velocity_m_s - lim.max_velocity_warn_m_s) / lim.max_velocity_warn_m_s}
+            "velocity": max(0.0, hyd.velocity_m_s - lim.max_velocity_warn_m_s) / lim.max_velocity_warn_m_s,
+            "velocity_low": max(0.0, MIN_VELOCITY_M_S - hyd.velocity_m_s) / MIN_VELOCITY_M_S,
+            "flow_low": max(0.0, lim.flow_min_lpm - flow_lpm) / max(lim.flow_min_lpm, 1e-9)}
     return {"t_hot_max_c": t_hot_max, "dt_pack_max_k": dt_pack_max, "t_out_max_c": t_out_max, "dp_plates_kpa": hyd.dp_plates_total_pa / 1e3,
             "dp_total_kpa": hyd.dp_total_pa / 1e3, "velocity_m_s": hyd.velocity_m_s, "reynolds": hyd.reynolds, "regime": hyd.regime,
             "p_hyd_w": hyd.p_hyd_w, "p_elec_w": hyd.p_elec_w, "r_total_k_w": cp.r_total, "effectiveness": cp.effectiveness,

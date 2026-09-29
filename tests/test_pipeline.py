@@ -345,3 +345,33 @@ def test_scalar_mode_matches_full_mode():
     fast = run_analysis(base_request(), mode="scalars")
     assert "series" not in fast and "trace" not in fast
     assert fast["design"]["q_design_w"] == full["design"]["q_design_w"] and fast["heat"]["max_pack_heat_kw"] == full["heat"]["max_pack_heat_kw"]
+
+
+@pytest.mark.parametrize("philosophy", ["peak", "moving_average", "sustained", "drive_cycle"])
+def test_trace_graph_integrity_for_every_philosophy(philosophy):
+    r = run_analysis(base_request(cycle=long_cycle(), thermal=ThermalSettings(design_philosophy=philosophy, safety_factor=1.2, moving_avg_window_s=300.0)))
+    tr = r["trace"]
+    for nid, node in tr.items():
+        for dep in node["inputs"]:
+            assert dep in tr, f"{nid} depends on missing node {dep}"
+    # the selected philosophy's value must trace back to genuine inputs (not just to the peak instant)
+    chain, seen = [], set()
+
+    def visit(n):
+        if n in seen:
+            return
+        seen.add(n)
+        for d in tr[n]["inputs"]:
+            visit(d)
+        chain.append(n)
+    visit("design.q_design")
+    kinds = {tr[n]["kind"] for n in chain}
+    assert "input" in kinds and tr[chain[-1]]["kind"] == "result"
+    expected = {"peak": "heat.q_pack_pk", "moving_average": "heat.q_series", "sustained": "in.cell_cap", "drive_cycle": "th.c_pack"}[philosophy]
+    assert expected in chain
+    if philosophy == "drive_cycle":
+        assert {"in.t_initial", "in.t_target", "in.t_in"} <= set(chain)
+    assert tr["design.sf"]["kind"] == "assumption" and tr["design.sf"]["source"] == "assumed"      # default SF is labelled as an assumption
+    r2 = run_analysis(base_request(cycle=long_cycle(), thermal=ThermalSettings(design_philosophy=philosophy, safety_factor=1.2, moving_avg_window_s=300.0),
+                                   provenance={"thermal.safety_factor": ProvEntry(source="user")}))
+    assert r2["trace"]["design.sf"]["source"] == "user"

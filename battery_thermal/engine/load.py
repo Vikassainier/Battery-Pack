@@ -7,7 +7,7 @@ A driving cycle always takes precedence over a constant C-rate profile.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, replace
 
 import numpy as np
 
@@ -134,6 +134,9 @@ def _from_cycle(req: AnalysisRequest, pack: PackDerived) -> LoadProfile:
     arrays = {"vals": vals, "soc": soc_arr, "speed": speed, "p_trac": p_trac, "p_aux": p_aux}
     if reps > 1:
         t2, arr, period = _tile(t, arrays, reps)
+        if road is not None:                                       # keep the road-load traces aligned with the tiled time base
+            road = replace(road, t=t2, **{f.name: np.tile(getattr(road, f.name), reps) for f in fields(road)
+                                          if f.name not in ("t", "accel_source")})
         t, vals, soc_arr, speed, p_trac, p_aux = t2, arr["vals"], None, arr["speed"], arr["p_trac"], arr["p_aux"]
         notes.append(f"Cycle repeated {reps}× (period {period:.0f} s) to represent consecutive driving; SOC is integrated, not read from file.")
     return LoadProfile(t=t - t[0], kind=kind, values=vals, source=src, charge_label=charge_label, soc_file_pct=soc_arr,
