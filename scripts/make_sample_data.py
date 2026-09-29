@@ -120,7 +120,7 @@ def make_drive_cycles() -> list[Path]:
             force = m * acc[i] + (crr * m * g if vms[i] > 0.01 else 0) + 0.5 * rho * cd * area * vms[i] ** 2
             pw = force * vms[i]
             pb = (pw / eta if pw >= 0 else pw * eta) + aux
-            i_pack = pb / 384.0 * 1000.0
+            i_pack = pb / 384.0
             w.writerow([t[i], round(v[i], 3), round(acc[i], 4), round(pb / 1000.0, 4), round(i_pack, 3), round(soc, 4)])
             soc -= pb * 1.0 / cap_j * 100
     return [p1, p2]

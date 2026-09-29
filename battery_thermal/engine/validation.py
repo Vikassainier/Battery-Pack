@@ -236,3 +236,126 @@ def validate_pack(cell: CellSpec, pack: PackConfig) -> list[Issue]:
 def validate_config(req: AnalysisRequest) -> list[Issue]:
     """Phase-1 subset: cell + pack only (used by the live configuration endpoint)."""
     return validate_cell(req.cell, req.require_cell_confirmation) + validate_pack(req.cell, req.pack)
+
+
+# --------------------------------------------------------------------------------------------------
+# vehicle / driving cycle / C-rate
+# --------------------------------------------------------------------------------------------------
+def validate_vehicle(v) -> list[Issue]:
+    out: list[Issue] = []
+    add = lambda *a, **k: out.append(Issue(*a, **k))  # noqa: E731
+    checks = [("mass_kg", 300, 60000, "vehicle mass"), ("crr", 0.002, 0.05, "rolling-resistance coefficient"),
+              ("cd", 0.1, 1.5, "drag coefficient"), ("frontal_area_m2", 0.5, 12, "frontal area"),
+              ("wheel_radius_m", 0.15, 0.7, "wheel radius")]
+    for f, lo, hi, label in checks:
+        x = getattr(v, f)
+        if not _num(x) or x <= 0:
+            add("VEHICLE_VALUE_INVALID", ERROR, f"vehicle.{f}", f"{label} must be > 0 (got {x}).")
+        elif not (lo <= x <= hi):
+            add("VEHICLE_VALUE_ATYPICAL", WARNING, f"vehicle.{f}", f"{label} = {x:g} is outside the usual range {lo:g}-{hi:g} - check units.")
+    if not (0 < v.drivetrain_eff <= 1):
+        add("VEHICLE_EFFICIENCY_INVALID", ERROR, "vehicle.drivetrain_eff", f"Drivetrain efficiency must be in (0, 1] (got {v.drivetrain_eff}).")
+    elif v.drivetrain_eff < 0.6:
+        add("VEHICLE_EFFICIENCY_LOW", WARNING, "vehicle.drivetrain_eff", f"Drivetrain efficiency {v.drivetrain_eff:g} is unusually low.")
+    if v.aux_load_kw < 0:
+        add("VEHICLE_VALUE_INVALID", ERROR, "vehicle.aux_load_kw", "Auxiliary load cannot be negative.")
+    if not (0 <= v.regen_fraction <= 1):
+        add("VEHICLE_REGEN_INVALID", ERROR, "vehicle.regen_fraction", "Regenerative fraction must be within 0-1.")
+    if abs(v.gradient_pct) > 40:
+        add("VEHICLE_GRADE_UNREALISTIC", WARNING, "vehicle.gradient_pct", f"Road gradient {v.gradient_pct:g} % is unrealistic.")
+    if v.max_regen_kw is not None and v.max_regen_kw < 0:
+        add("VEHICLE_VALUE_INVALID", ERROR, "vehicle.max_regen_kw", "Max regen power must be >= 0.")
+    return out
+
+
+def validate_time_base(t, gap_factor: float = 5.0) -> list[Issue]:
+    """Engine-side re-check of a time vector (defence in depth - ingestion normally catches these first)."""
+    import numpy as np
+    out: list[Issue] = []
+    t = np.asarray(t, float)
+    if t.size < 10:
+        out.append(Issue("CYCLE_TOO_SHORT", ERROR, "cycle.time_s", f"Only {t.size} samples - need at least 10."))
+        return out
+    if not np.all(np.isfinite(t)):
+        out.append(Issue("CYCLE_TIME_INVALID", ERROR, "cycle.time_s", "Time contains non-numeric values."))
+        return out
+    dt = np.diff(t)
+    if np.any(dt < 0):
+        out.append(Issue("CYCLE_TIME_NOT_MONOTONIC", ERROR, "cycle.time_s", "Time is not monotonically increasing."))
+    if np.any(dt == 0):
+        out.append(Issue("CYCLE_DUPLICATE_TIME", ERROR, "cycle.time_s", f"{int((dt == 0).sum())} duplicate timestamp(s)."))
+    if has_errors(out):
+        return out
+    med = float(np.median(dt))
+    big = dt > gap_factor * med
+    if big.any():
+        out.append(Issue("CYCLE_GAP", ERROR, "cycle.time_s", f"{int(big.sum())} gap(s) in the time base (largest {dt.max():g} s vs. median {med:g} s)."))
+    elif (dt.max() - dt.min()) / med > 0.01:
+        out.append(Issue("CYCLE_NONUNIFORM_DT", WARNING, "cycle.time_s",
+                         f"Non-uniform time step (min {dt.min():g}, median {med:g}, max {dt.max():g} s)."))
+    return out
+
+
+def validate_load(req: AnalysisRequest) -> list[Issue]:
+    import numpy as np
+    out: list[Issue] = []
+    add = lambda *a, **k: out.append(Issue(*a, **k))  # noqa: E731
+    c, opt = req.cycle, req.cycle_options
+    if c is None and req.crate_profile is None:
+        add("LOAD_MISSING", ERROR, "cycle", "No load defined.", "Upload a driving cycle or define a charge/discharge C-rate duty profile.")
+    if c is not None:
+        out += validate_time_base(c.time_s)
+        avail = {"battery_current": c.battery_current_a is not None, "battery_power": c.battery_power_kw is not None,
+                 "motor_power": c.motor_power_kw is not None, "vehicle_speed": c.speed_kmh is not None}
+        if not any(avail.values()):
+            add("CYCLE_NO_LOAD_DATA", ERROR, "cycle", "The driving cycle has no battery current, battery power, motor power or speed.")
+        elif opt.source != "auto" and not avail[opt.source]:
+            add("CYCLE_SOURCE_UNAVAILABLE", ERROR, "cycle_options.source", f"Selected load source '{opt.source}' is not in the driving cycle.")
+        else:
+            src = opt.source if opt.source != "auto" else next(k for k in ("battery_current", "battery_power", "motor_power", "vehicle_speed") if avail[k])
+            if src == "vehicle_speed" and req.vehicle is None:
+                add("VEHICLE_PARAMS_MISSING", ERROR, "vehicle", "Only vehicle speed is available - vehicle parameters are required to calculate battery power.",
+                    "Enter mass, Crr, Cd, frontal area, wheel radius, drivetrain efficiency, auxiliary load and gradient.")
+            if src == "motor_power" and opt.motor_power_basis == "mechanical" and req.vehicle is None:
+                add("VEHICLE_PARAMS_MISSING", ERROR, "vehicle", "Motor power is mechanical - the drivetrain efficiency is needed to obtain battery power.")
+            if src == "battery_power" and not opt.battery_power_includes_aux and req.vehicle is None:
+                add("VEHICLE_PARAMS_MISSING", ERROR, "vehicle", "Battery power excludes auxiliaries but no auxiliary load was provided.")
+        if c.soc_pct is not None:
+            s = np.asarray(c.soc_pct, float)
+            if np.nanmin(s) < 0 or np.nanmax(s) > 100:
+                add("CYCLE_SOC_OUT_OF_RANGE", ERROR, "cycle.soc_pct", f"SOC in the cycle leaves 0-100 % (min {np.nanmin(s):.3g}, max {np.nanmax(s):.3g}).")
+        for name in ("speed_kmh", "accel_ms2", "motor_power_kw", "battery_power_kw", "battery_current_a", "soc_pct", "grade_pct"):
+            arr = getattr(c, name)
+            if arr is not None and not np.all(np.isfinite(np.asarray(arr, float))):
+                add("CYCLE_MISSING_VALUES", ERROR, f"cycle.{name}", f"{name} contains missing / non-finite values.")
+        if not (1 <= opt.repeats <= 200):
+            add("CYCLE_REPEATS_INVALID", ERROR, "cycle_options.repeats", "Cycle repeats must be between 1 and 200.")
+    if req.vehicle is not None:
+        out += validate_vehicle(req.vehicle)
+    p = req.crate_profile
+    if p is not None and c is None:
+        if p.dt_s <= 0:
+            add("CRATE_PROFILE_INVALID", ERROR, "crate_profile.dt_s", "Profile time step must be > 0 s.")
+        if not p.segments:
+            add("CRATE_PROFILE_INVALID", ERROR, "crate_profile.segments", "The C-rate profile has no segments.")
+        for i, s in enumerate(p.segments):
+            if s.c_rate < 0 or s.duration_s <= 0:
+                add("CRATE_INVALID", ERROR, f"crate_profile.segments[{i}]", f"Segment {i + 1}: C-rate must be >= 0 and duration > 0 s.")
+            elif s.c_rate > 20:
+                add("CRATE_UNREALISTIC", WARNING, f"crate_profile.segments[{i}]", f"Segment {i + 1}: {s.c_rate:g} C is unrealistic - check A vs C.")
+    lim = req.crate_limits
+    for f in ("cont_discharge_c", "peak_discharge_c", "charge_c", "regen_c", "peak_regen_c"):
+        v = getattr(lim, f)
+        if v is not None and (not _num(v) or v <= 0):
+            add("CRATE_INVALID", ERROR, f"crate_limits.{f}", f"{f} must be a positive C-rate (got {v}).")
+        elif v is not None and v > 20:
+            add("CRATE_UNREALISTIC", WARNING, f"crate_limits.{f}", f"{f} = {v:g} C is unrealistic.")
+    for a, b in (("cont_discharge_c", "peak_discharge_c"), ("regen_c", "peak_regen_c")):
+        va, vb = getattr(lim, a), getattr(lim, b)
+        if va is not None and vb is not None and vb < va:
+            add("CRATE_PEAK_BELOW_CONTINUOUS", ERROR, f"crate_limits.{b}", f"Peak C-rate ({vb:g}) is below the continuous C-rate ({va:g}).")
+    for f in ("peak_discharge_duration_s", "peak_regen_duration_s"):
+        v = getattr(lim, f)
+        if v is not None and v <= 0:
+            add("CRATE_INVALID", ERROR, f"crate_limits.{f}", f"{f} must be > 0 s.")
+    return out

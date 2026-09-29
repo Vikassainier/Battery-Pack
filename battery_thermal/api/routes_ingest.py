@@ -4,11 +4,14 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+import json
+
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 
 from ..ingestion.common import IngestionError
 from ..ingestion.datasheet import datasheet_template_csv, datasheet_template_xlsx, parse_datasheet
+from ..ingestion.drive_cycle import parse_drive_cycle
 
 router = APIRouter(prefix="/api", tags=["ingestion"])
 
@@ -72,3 +75,28 @@ def template_xlsx():
     return Response(datasheet_template_xlsx(),
                     media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": 'attachment; filename="cell_datasheet_template.xlsx"'})
+
+
+def _cycle(data: bytes, name: str, repair: bool, resample_dt_s, assume_dt_s, sheet, mapping):
+    try:
+        m = json.loads(mapping) if mapping else None
+        return parse_drive_cycle(data, name, repair=repair, resample_dt_s=resample_dt_s, assume_dt_s=assume_dt_s,
+                                 sheet=sheet or None, mapping=m).to_dict()
+    except (IngestionError, json.JSONDecodeError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/drivecycle/parse")
+async def drivecycle_parse(file: UploadFile = File(...), repair: bool = Form(False), resample_dt_s: float | None = Form(None),
+                           assume_dt_s: float | None = Form(None), sheet: str | None = Form(None), mapping: str | None = Form(None)):
+    """Parse a driving-cycle file (CSV / XLSX). Reports which parameters are available and all data-quality issues."""
+    data = await _read_upload(file)
+    return _cycle(data, file.filename or "upload", repair, resample_dt_s, assume_dt_s, sheet, mapping)
+
+
+@router.post("/samples/{name}/parse-cycle")
+def parse_sample_cycle(name: str, repair: bool = False):
+    p = (SAMPLE_DIR / name).resolve()
+    if SAMPLE_DIR.resolve() not in p.parents or not p.is_file():
+        raise HTTPException(404, "Unknown sample file")
+    return _cycle(p.read_bytes(), p.name, repair, None, None, None, None)
