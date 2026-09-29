@@ -110,7 +110,7 @@ def recommendations(res: dict, req) -> list[dict]:
     dq = res["data_quality"]
     if dq["n_assumed"]:
         low = [a for a in res["assumptions"] if a["confidence"] == "Low" and a["group"] != "Margins"]
-        names = ", ".join(a["parameter"] for a in low[:8]) + (f" and {len(low) - 8} more" if len(low) > 8 else "")
+        names = ", ".join(a["parameter"] for a in low[:4]) + (f" and {len(low) - 4} more" if len(low) > 4 else "")
         add("warning", "Confirm assumptions before design release", f"{dq['n_assumed']} parameters are unconfirmed engineering assumptions ({dq['n_low']} low confidence): {names}. Replace them with measured or supplier data.")
     add("info", "Verification", "Validate the cell-to-cell temperature spread and the flow distribution with a CFD or 1-D network model and confirm the predicted temperatures with a module-level thermal test before freezing the design. "
         "Final radiator / chiller sizing requires detailed air-side and exchanger-design information.")

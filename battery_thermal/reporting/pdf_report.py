@@ -87,6 +87,16 @@ def mathtext(t: str) -> str:
     return re.sub(r"\b([A-Za-zΑ-Ωα-ωΔ]{1,3})_([A-Za-z0-9,]+)", r"\1<sub>\2</sub>", t)
 
 
+def _clip(text: str, limit: int) -> str:
+    """Shorten to at most ``limit`` characters at a sentence or word boundary (never mid-word); full text lives in Section 15."""
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    end = max(cut.rfind(". "), cut.rfind("; "))
+    cut = cut[:end + 1] if end > limit * 0.5 else cut[:cut.rfind(" ")].rstrip(",;:")
+    return cut + " … (see Section 15)"
+
+
 def P(text, style="body"):
     return Paragraph(text, S[style])
 
@@ -253,7 +263,7 @@ def _exec_summary(res, req, recs):
                                          [10, 84, 22, 58], status_cols=(2,))]
     items = [r for r in recs if r["level"] in ("fail", "warning")][:5]
     if items:
-        out += [H2("Principal findings")] + [P(f"• <b>{esc(r['title'])}</b> - {esc(r['text'][:320])}{'…' if len(r['text']) > 320 else ''}", "small") for r in items]
+        out += [H2("Principal findings")] + [P(f"• <b>{esc(r['title'])}</b> - {esc(_clip(r['text'], 330))}", "small") for r in items]
     if res["data_quality"]["n_assumed"]:
         out.append(P(f"Data quality: {res['data_quality']['n_assumed']} parameters are unconfirmed engineering assumptions ({res['data_quality']['n_low']} low confidence) - see Section 6.", "warn"))
     return out

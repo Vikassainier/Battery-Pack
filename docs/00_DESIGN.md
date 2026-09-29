@@ -233,7 +233,7 @@ class: < 0 insufficient | 0…warn% warning | warn%…target% moderate | ≥ tar
 | Concern | Choice | Why |
 |---------|--------|-----|
 | Language | Python 3.11 | scientific stack, typed |
-| Calc | NumPy, SciPy (interpolation), pandas (file ingestion) | standard |
+| Calc | NumPy (engine), pandas (file ingestion); SciPy as an independent numerical reference in the test-suite (ODE solver, interpolators, root finders) | the engine's interpolation, integrator and solvers are small hand-written routines so every number is traceable and the extrapolation policy is explicit; SciPy re-derives the same numbers in `tests/test_scipy_crosschecks.py` |
 | API | FastAPI + Pydantic v2 | typed schemas = data schema documentation, OpenAPI docs free |
 | Datasheet PDF | pdfplumber (text + tables), regex synonym library | no OCR dependency |
 | Excel | openpyxl | read + write, live formulas in the validation sheet |
@@ -249,18 +249,20 @@ class: < 0 insufficient | 0…warn% warning | warn%…target% moderate | ≥ tar
 
 ```
 Battery-Pack/
-├── README.md  pyproject.toml  requirements.txt  Dockerfile
+├── README.md  pyproject.toml  requirements.txt  requirements-dev.txt  Dockerfile
 ├── docs/            00_DESIGN.md  01_PHASE_LOG.md (hand calcs + verification per phase)
-├── sample_data/     cell datasheets (CSV/XLSX/PDF), drive cycles, vehicle example
+├── sample_data/     cell datasheets (CSV/XLSX/PDF, synthetic), drive cycles
+├── scripts/         make_sample_data.py  ui_smoke.py + ui_flow_*.py (Playwright)  check_js.sh
 ├── battery_thermal/
-│   ├── engine/      schemas units interp trace validation pack vehicle resistance electrical heat
-│   │                simulation thermal coolant cooling coldplate pressure_drop sizing checks
-│   │                sensitivity optimizer assumptions pipeline
+│   ├── engine/      schemas units interp trace validation pack vehicle load resistance electrical heat
+│   │                simulation summary thermal coolant cooling coldplate channel pressure_drop sizing
+│   │                checks sensitivity optimizer assumptions pipeline
 │   ├── ingestion/   common datasheet drive_cycle
-│   ├── reporting/   charts pdf_report excel_report
-│   ├── validation_cases/  cases.py
-│   └── api/         main.py  static/{index.html, css/, js/}
-└── tests/           one test module per engine module + api/report/validation-case tests
+│   ├── reporting/   charts labels text pdf_report excel_report
+│   ├── validation_cases/  cases.py (built-in hand-calculation cases)  sample_project.py (demo project)
+│   └── api/         main.py routes_ingest routes_analysis routes_report routes_validation
+│                    static/{index.html, css/, js/}
+└── tests/           one test module per phase + pipeline / report / validation-case / SciPy cross-check tests
 ```
 
 ---------------------------------------------------------------------------
