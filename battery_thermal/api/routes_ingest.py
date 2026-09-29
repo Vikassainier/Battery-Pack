@@ -12,12 +12,26 @@ from fastapi.responses import FileResponse, Response
 from ..ingestion.common import IngestionError
 from ..ingestion.datasheet import datasheet_template_csv, datasheet_template_xlsx, parse_datasheet
 from ..ingestion.drive_cycle import parse_drive_cycle
+from ..ingestion.sample_files import ensure_sample_files
 from ..validation_cases.sample_project import sample_project_state
 
 router = APIRouter(prefix="/api", tags=["ingestion"])
 
 SAMPLE_DIR = Path(os.environ.get("BATTERY_THERMAL_SAMPLES", Path(__file__).resolve().parents[2] / "sample_data"))
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+_samples_checked = False
+
+
+def _sample_dir() -> Path:
+    """The sample directory, with any missing synthetic binary sample (XLSX / PDF) created on first use."""
+    global _samples_checked
+    if not _samples_checked:
+        _samples_checked = True
+        try:
+            ensure_sample_files(SAMPLE_DIR)
+        except OSError:                       # read-only installation: serve whatever is there
+            pass
+    return SAMPLE_DIR
 
 
 async def _read_upload(file: UploadFile) -> bytes:
@@ -41,9 +55,10 @@ async def datasheet_parse(file: UploadFile = File(...)):
 
 @router.get("/samples")
 def list_samples():
-    if not SAMPLE_DIR.exists():
+    d = _sample_dir()
+    if not d.exists():
         return []
-    return sorted(p.name for p in SAMPLE_DIR.iterdir() if p.is_file())
+    return sorted(p.name for p in d.iterdir() if p.is_file())
 
 
 @router.get("/sample-project")
@@ -54,16 +69,18 @@ def sample_project():
 
 @router.get("/samples/{name}")
 def get_sample(name: str):
-    p = (SAMPLE_DIR / name).resolve()
-    if SAMPLE_DIR.resolve() not in p.parents or not p.is_file():
+    d = _sample_dir()
+    p = (d / name).resolve()
+    if d.resolve() not in p.parents or not p.is_file():
         raise HTTPException(404, "Unknown sample file")
     return FileResponse(p, filename=p.name)
 
 
 @router.post("/samples/{name}/parse-datasheet")
 def parse_sample_datasheet(name: str):
-    p = (SAMPLE_DIR / name).resolve()
-    if SAMPLE_DIR.resolve() not in p.parents or not p.is_file():
+    d = _sample_dir()
+    p = (d / name).resolve()
+    if d.resolve() not in p.parents or not p.is_file():
         raise HTTPException(404, "Unknown sample file")
     try:
         return parse_datasheet(p.read_bytes(), p.name).to_dict()
@@ -103,7 +120,8 @@ async def drivecycle_parse(file: UploadFile = File(...), repair: bool = Form(Fal
 
 @router.post("/samples/{name}/parse-cycle")
 def parse_sample_cycle(name: str, repair: bool = False):
-    p = (SAMPLE_DIR / name).resolve()
-    if SAMPLE_DIR.resolve() not in p.parents or not p.is_file():
+    d = _sample_dir()
+    p = (d / name).resolve()
+    if d.resolve() not in p.parents or not p.is_file():
         raise HTTPException(404, "Unknown sample file")
     return _cycle(p.read_bytes(), p.name, repair, None, None, None, None)
