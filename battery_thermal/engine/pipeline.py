@@ -49,14 +49,14 @@ class AnalysisAbort(Exception):
         self.issue = issue
 
 
-def _j(o: Any):
+def jsonable(o: Any):
     """JSON-safe conversion (numpy -> python, NaN/inf -> None)."""
     if isinstance(o, dict):
-        return {str(k): _j(v) for k, v in o.items()}
+        return {str(k): jsonable(v) for k, v in o.items()}
     if isinstance(o, (list, tuple)):
-        return [_j(v) for v in o]
+        return [jsonable(v) for v in o]
     if isinstance(o, np.ndarray):
-        return _j(o.tolist())
+        return jsonable(o.tolist())
     if isinstance(o, (np.floating, float)):
         f = float(o)
         return f if math.isfinite(f) else None
@@ -65,7 +65,7 @@ def _j(o: Any):
     if isinstance(o, (np.bool_,)):
         return bool(o)
     if hasattr(o, "to_dict"):
-        return _j(o.to_dict())
+        return jsonable(o.to_dict())
     return o
 
 
@@ -87,8 +87,11 @@ def blocked(req: AnalysisRequest, issues: list[Issue]) -> dict:
 
 
 # ==================================================================================================
-def run_analysis(req: AnalysisRequest, *, mode: str = "full") -> dict:
-    """mode 'full': everything (series, trace, register). mode 'scalars': fast path used by sensitivity/optimisation."""
+def run_analysis(req: AnalysisRequest, *, mode: str = "full", _artefacts: dict | None = None) -> dict:
+    """mode 'full': everything (series, trace, register). mode 'scalars': fast path used by sensitivity/optimisation.
+
+    ``_artefacts`` (optional dict) receives internal objects (simulation, properties, ...) for the optimiser.
+    """
     full = mode == "full"
     issues: list[Issue] = validate_request(req)
     if has_errors(issues):
@@ -376,11 +379,14 @@ def run_analysis(req: AnalysisRequest, *, mode: str = "full") -> dict:
                                                f"Here the heat is {summ['electrical']['heat_to_throughput_pct'] or 0:.2f} % of the electrical throughput."},
         "assumptions": [r.to_dict() for r in register], "data_quality": {"n_assumed": n_assumed, "n_low": n_low, "n_total": len(register)},
     }
+    if _artefacts is not None:
+        _artefacts.update(sim=sim, props=props, ua=ua, c_pack=c_pack, t_in=t_in, t_amb=t_amb, t_tgt=t_tgt, pack=pack, plate=plate, dt_cool=dt_cool,
+                          m_actual=m_actual, dl=dl, has_t=has_t)
     if full:
         result["trace"] = tr.to_dict()
         result["series"] = _series(sim, load, t_hot, dt_pack, dt_mod, uncooled, pack)
         result["load"] = load_summary(load, 3000)
-    return _j(result)
+    return jsonable(result)
 
 
 # ==================================================================================================
@@ -524,3 +530,6 @@ def _series(sim: SimResult, load: LoadProfile, t_hot, dt_pack, dt_mod, uncooled,
     if uncooled is not None:
         s["t_uncooled_c"] = _r(uncooled.t_cell_c[sl], 4)
     return s
+
+
+_j = jsonable        # backwards-compatible alias

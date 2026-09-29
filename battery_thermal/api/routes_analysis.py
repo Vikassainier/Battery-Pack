@@ -5,10 +5,13 @@ from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..engine.load import LoadError, build_load, load_summary
+from ..engine.optimizer import optimize_cooling
 from ..engine.pack import ConfigError, derive_pack
+from ..engine.pipeline import jsonable, run_analysis
 from ..engine.schemas import (
     AnalysisRequest, CRateLimits, CRateProfile, CellSpec, CycleOptions, DriveCycle, PackConfig, VehicleParams,
 )
+from ..engine.sensitivity import sensitivity_analysis
 from ..engine.validation import has_errors, validate_load
 
 router = APIRouter(prefix="/api", tags=["analysis"])
@@ -53,3 +56,29 @@ def load_preview(body: LoadPreviewRequest):
     except LoadError as exc:
         return {"ok": False, "issues": [i.to_dict() for i in issues] + [_issue("LOAD_ERROR", str(exc))]}
     return {"ok": True, "issues": [i.to_dict() for i in issues], "load": load_summary(lp)}
+
+
+@router.post("/analyze")
+def analyze(req: AnalysisRequest):
+    """Run the complete analysis: heat generation, thermal load, cooling requirement, sizing, checks, trace."""
+    return jsonable(run_analysis(req))
+
+
+class SensitivityRequest(BaseModel):
+    request: AnalysisRequest
+    only: list[str] | None = None
+
+
+@router.post("/sensitivity")
+def sensitivity(body: SensitivityRequest):
+    return jsonable(sensitivity_analysis(body.request, body.only))
+
+
+class OptimizeRequest(BaseModel):
+    request: AnalysisRequest
+    variables: list[str] | None = None
+
+
+@router.post("/optimize")
+def optimize(body: OptimizeRequest):
+    return jsonable(optimize_cooling(body.request, body.variables))

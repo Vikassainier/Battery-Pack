@@ -65,10 +65,18 @@ def _choose_source(req: AnalysisRequest, avail: dict[str, bool]) -> str:
 
 def build_load(req: AnalysisRequest, pack: PackDerived) -> LoadProfile:
     if req.cycle is not None:
-        return _from_cycle(req, pack)
-    if req.crate_profile is not None:
-        return from_crate_profile(req.crate_profile, pack)
-    raise LoadError("No load defined: provide a driving cycle or a charge/discharge C-rate duty profile.")
+        lp = _from_cycle(req, pack)
+    elif req.crate_profile is not None:
+        lp = from_crate_profile(req.crate_profile, pack)
+    else:
+        raise LoadError("No load defined: provide a driving cycle or a charge/discharge C-rate duty profile.")
+    k = req.cycle_options.load_scale
+    if k != 1.0:
+        if k <= 0:
+            raise LoadError("Load scale must be > 0.")
+        lp.values = lp.values * k
+        lp.notes.append(f"Whole load scaled by ×{k:g} (what-if / sensitivity option).")
+    return lp
 
 
 def _from_cycle(req: AnalysisRequest, pack: PackDerived) -> LoadProfile:

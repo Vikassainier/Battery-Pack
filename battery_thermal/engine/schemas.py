@@ -170,6 +170,7 @@ class CycleOptions(_Model):
     battery_power_includes_aux: bool = True
     soc_mode: Literal["auto", "integrate", "file"] = "auto"
     repeats: int = 1
+    load_scale: float = 1.0                   # what-if multiplier on the whole load (used by the C-rate sensitivity)
 
 
 class VehicleParams(_Model):
