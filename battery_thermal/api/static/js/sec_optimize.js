@@ -1,4 +1,4 @@
-// Step 10 - Optimise the cooling design.
+// Step 9 - Optimise the cooling design.
 import { state, buildRequest, setValue } from './state.js';
 import { api } from './api.js';
 import { go } from './app.js';
@@ -34,9 +34,9 @@ function view(root, o, rerender) {
 
 export async function renderOptimize(root) {
   const rerender = () => { root.replaceChildren(); renderOptimize(root); };
-  root.append(h('h1', {}, '10 · Optimise cooling design'));
+  root.append(h('h1', {}, '9 · Optimise cooling design'));
   const st = staleBanner(); if (st) root.append(st);
-  if (!state.cold_plate) { root.append(h('div', { class: 'banner' }, 'Define a cold plate first (step 6).'), h('button', { class: 'btn primary', onclick: () => go('cooling') }, 'Open thermal & cooling parameters')); return; }
+  if (!state.cold_plate) { root.append(h('div', { class: 'banner' }, 'Define a cold plate first (step 4).'), h('button', { class: 'btn primary', onclick: () => go('cooling') }, 'Open cooling parameters')); return; }
   const sel = new Set(state.ui.optVars || Object.keys(VAR_LABEL));
   root.append(card('What to optimise', 'Finds the lowest pump power that still meets the target cell temperature, cell-to-cell ΔT, coolant outlet, pressure-drop and velocity limits. The heat generation from the last run is held fixed.',
     h('div', { class: 'pill-row' }, ...Object.entries(VAR_LABEL).map(([k, l]) => h('label', { class: 'f', style: 'flex-direction:row;gap:6px;align-items:center' },

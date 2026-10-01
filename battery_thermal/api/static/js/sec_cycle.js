@@ -98,7 +98,7 @@ export async function renderCycle(root) {
     upload(new File([blob], name));
   } }, label);
 
-  root.append(h('h1', {}, '4 · Driving cycle'),
+  root.append(h('h1', {}, '3 · Drive cycle'),
     card('Driving-cycle file', 'The actual cycle is used for the transient heat calculation - a constant C-rate is only a fallback when no cycle is supplied.',
       drop, fileInput,
       h('div', { style: 'margin-top:10px' }, 'Synthetic samples (test data): ', sample('drive_cycle_speed_only.csv', 'speed only'), ' · ', sample('drive_cycle_battery.csv', 'battery power/current/SOC'),
@@ -184,13 +184,13 @@ export async function renderCycle(root) {
     };
     refreshPreview();
   } else if (!meta) {
-    out.append(h('div', { class: 'banner' }, 'No driving cycle loaded. You can instead define a constant C-rate duty profile on step 5.'));
+    out.append(h('div', { class: 'banner' }, 'No driving cycle loaded. You can instead define a constant C-rate duty profile in step 5 (charging & discharging parameters).'));
   }
-  root.append(h('div', { style: 'margin-top:14px' }, h('button', { class: 'btn primary', onclick: () => go('crate') }, 'Next: C-rate definition →')));
+  root.append(h('div', { style: 'margin-top:14px' }, h('button', { class: 'btn primary', onclick: () => go('cooling') }, 'Next: cooling parameters →')));
 }
 
 // ------------------------------------------------------------------------------------------------------
-// Step 5 - charge / discharge C-rate
+// Step 5 - charging & discharging parameters (C-rates)
 // ------------------------------------------------------------------------------------------------------
 const CRATE_FIELDS = [
   ['Discharge', [
@@ -207,7 +207,7 @@ const CRATE_FIELDS = [
 export function renderCRate(root) {
   const rerender = () => { root.replaceChildren(); renderCRate(root); };
   const c = state.cell;
-  root.append(h('h1', {}, '5 · Charge / discharge C-rate'),
+  root.append(h('h1', {}, '5 · Charging & discharging parameters'),
     h('div', { class: 'banner' }, state.cycle
       ? 'A driving cycle is loaded: the actual cycle drives the heat calculation. These C-rates are used as limits for the C-rate check (Check 7) and for the sustained-load sizing philosophy.'
       : 'No driving cycle is loaded: the constant-C-rate duty profile below drives the calculation. These limits also feed Check 7 and the sustained-load philosophy.'),
@@ -249,5 +249,5 @@ export function renderCRate(root) {
         if (lim.charge_c) segs.push({ kind: 'charge', c_rate: lim.charge_c, duration_s: 1800 });
         state.crate_profile = { segments: segs, dt_s: 1 }; save(); rerender();
       } }, 'Create profile from the limits above'))));
-  root.append(h('div', { style: 'margin-top:14px' }, h('button', { class: 'btn primary', onclick: () => go('cooling') }, 'Next: thermal & cooling parameters →')));
+  root.append(h('div', { style: 'margin-top:14px' }, h('button', { class: 'btn primary', onclick: () => go('run') }, 'Next: run the analysis →')));
 }

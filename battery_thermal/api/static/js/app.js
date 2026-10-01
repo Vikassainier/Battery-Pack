@@ -5,27 +5,26 @@ import { h, toast } from './ui.js';
 
 const STEPS = [
   { g: 'Inputs' },
-  { id: 'cell', n: 1, t: 'Cell datasheet' },
-  { id: 'confirm', n: 2, t: 'Confirm cell parameters' },
-  { id: 'pack', n: 3, t: 'Battery configuration' },
-  { id: 'cycle', n: 4, t: 'Driving cycle' },
-  { id: 'crate', n: 5, t: 'Charge / discharge C-rate' },
-  { id: 'cooling', n: 6, t: 'Thermal & cooling parameters' },
-  { id: 'assump', n: '•', t: 'Assumptions & data quality' },
+  { id: 'cell', n: 1, t: 'Cell parameters' },
+  { id: 'pack', n: 2, t: 'Battery configuration' },
+  { id: 'cycle', n: 3, t: 'Drive cycle' },
+  { id: 'cooling', n: 4, t: 'Cooling parameters' },
+  { id: 'crate', n: 5, t: 'Charging & discharging parameters' },
   { g: 'Analysis' },
-  { id: 'run', n: 7, t: 'Run analysis' },
-  { id: 'heat', n: 8, t: 'Review heat load' },
-  { id: 'coolreq', n: 9, t: 'Review cooling requirement' },
-  { id: 'optimize', n: 10, t: 'Optimise cooling design' },
+  { id: 'run', n: 6, t: 'Run analysis' },
+  { id: 'heat', n: 7, t: 'Review heat load' },
+  { id: 'coolreq', n: 8, t: 'Review cooling requirement' },
+  { id: 'optimize', n: 9, t: 'Optimise cooling design' },
+  { id: 'assump', n: '•', t: 'Assumptions & data quality' },
   { id: 'sens', n: '•', t: 'Sensitivity analysis' },
   { id: 'trace', n: '•', t: 'Calculation traceability' },
   { g: 'Deliverables' },
-  { id: 'report', n: 11, t: 'Engineering report' },
+  { id: 'report', n: 10, t: 'Engineering report' },
   { id: 'validation', n: '•', t: 'Validation cases' },
 ];
 
 const SECTIONS = {
-  cell: ['./sec_cell.js', 'renderCellUpload'], confirm: ['./sec_cell.js', 'renderCellConfirm'],
+  cell: ['./sec_cell.js', 'renderCell'], confirm: ['./sec_cell.js', 'renderCell'],
   pack: ['./sec_pack.js', 'renderPack'], cycle: ['./sec_cycle.js', 'renderCycle'], crate: ['./sec_cycle.js', 'renderCRate'],
   cooling: ['./sec_cooling.js', 'renderCooling'], assump: ['./sec_assumptions.js', 'renderAssumptions'],
   run: ['./sec_results.js', 'renderRun'], heat: ['./sec_results.js', 'renderHeat'], coolreq: ['./sec_results.js', 'renderCoolingReq'],
@@ -35,7 +34,7 @@ const SECTIONS = {
 };
 
 const done = {
-  cell: () => !!state.ui.extraction || state.cell.capacity_ah != null, confirm: () => !!state.cell.confirmed,
+  cell: () => !!state.cell.confirmed,
   pack: () => Number.isFinite(state.pack.ns) && Number.isFinite(state.pack.np), cycle: () => !!state.cycle || !!state.crate_profile,
   run: () => !!state.ui.result,
 };
@@ -71,6 +70,7 @@ function renderTopbar() {
 }
 
 export async function go(id) {
+  if (id === 'confirm') id = 'cell';                       // cell upload and confirmation are one page
   state.ui.step = id;
   renderNav();
   const view = document.getElementById('view');

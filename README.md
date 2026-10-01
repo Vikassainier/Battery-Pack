@@ -46,23 +46,21 @@ rebuilt on first use if missing), and the project (*Save project* / *Open projec
 
 ## The workflow (left-hand navigation)
 
+Five input steps, then the analysis:
+
 | # | Step | What happens |
 |---|------|--------------|
-| 1 | **Cell datasheet** | Upload PDF / Excel / CSV (or start from the CSV/XLSX template). The parser *proposes* chemistry, type, capacity, voltages, DC/AC resistance, R vs SOC / T / map, OCV vs SOC, dU/dT, capacity vs T, C-rates, pulse capability, dimensions, mass, temperature ranges. |
-| 2 | **Confirm cell parameters** | Every extracted value is shown with its source line, editable, and must be **confirmed** before any calculation runs. |
-| 3 | **Battery configuration** | Ns, Np, modules, cells per module, SOC window, temperatures; validated against the cell data (voltage/capacity/energy consistency). |
-| 4 | **Driving cycle** | CSV/Excel upload with column detection and unit heuristics; data-quality checks (gaps, duplicates, non-uniform steps, missing signals, SOC range); opt-in logged repairs. Speed-only cycles use the **road-load model**. |
-| 5 | **Charge / discharge C-rate** | Continuous / peak (with duration) discharge, charge, regen; optional C-rate duty profile instead of a cycle. |
-| 6 | **Thermal & cooling parameters** | Resistance model level and extrapolation policy, entropic heat, design philosophy, coolant, cold plate, pump, limits. |
-| - | **Assumptions & data quality** | The register of every parameter with source class (user / datasheet / calculated / assumed) and confidence. |
-| 7 | **Run analysis** | Readiness list, run, KPIs, the eight PASS / WARNING / FAIL checks. Click any KPI to open its **input → formula → intermediate → result** trace. |
-| 8 | **Review heat load** | The seven graphs, per-time-step table, peak / average / energy, four design-load philosophies side by side. |
-| 9 | **Review cooling requirement** | Coolant flow (cell / module / pack), cold-plate resistance chain (R vs U explained), hydraulics, pump, radiator estimate, recommended inlet temperature. |
-| 10 | **Optimise cooling design** | Grid search for the lowest pump power that still meets all thermal and hydraulic limits. |
-| - | **Sensitivity analysis** | One-at-a-time perturbation of 12 parameters with the whole analysis re-run; tornado charts. |
-| - | **Calculation traceability** | Index of every recorded quantity with its formula, substituted numbers and dependencies. |
-| 11 | **Engineering report** | 17-section PDF and Excel workbook. |
-| - | **Validation cases** | Built-in hand calculations versus the same engine, side by side. |
+| 1 | **Cell parameters** | Optionally upload a PDF / Excel / CSV datasheet (or type the values). The parser only *proposes* values; every one is shown with its source line, editable, and must be **confirmed** before any calculation runs. Upload, review and confirmation are one page. |
+| 2 | **Battery configuration** | Ns, Np, modules, cells per module, SOC window, temperatures; validated against the cell data. |
+| 3 | **Drive cycle** | CSV/Excel upload with column detection, unit heuristics and data-quality checks; speed-only cycles use the **road-load model**. |
+| 4 | **Cooling parameters** | Design philosophy and safety factor, coolant, cold plate. Heat-model, thermal-model, pump and check-limit settings sit under *Advanced* (defaults are fine for most projects). |
+| 5 | **Charging & discharging parameters** | Continuous / peak discharge, charge and regen C-rates; optional C-rate duty profile instead of a cycle. |
+| 6 | **Run analysis** | Readiness list, run, KPIs, the eight PASS / WARNING / FAIL checks. Click any KPI to open its **input → formula → intermediate → result** trace. |
+| 7 | **Review heat load** | The seven graphs, per-time-step table, peak / average / energy, four design-load philosophies side by side. |
+| 8 | **Review cooling requirement** | Coolant flow (cell / module / pack), cold-plate resistance chain, hydraulics, pump, radiator estimate, recommended inlet temperature. |
+| 9 | **Optimise cooling design** | Grid search for the lowest pump power that still meets all limits. |
+| 10 | **Engineering report** | 17-section PDF and Excel workbook. |
+| - | Assumptions & data quality · Sensitivity · Traceability · Validation cases | Supporting views: the assumptions register, tornado charts, the trace index, and the built-in hand-calculation cases. |
 
 ## What is calculated
 

@@ -1,4 +1,4 @@
-// Steps 1-2 - Cell datasheet: ingestion (Phase 2) and the review/confirm table (Phase 1 baseline).
+// Step 1 - Cell parameters: optional datasheet upload, review of every value, and confirmation - on one page.
 import { state, getPath, setPath, setValue, prov, save } from './state.js';
 import { api } from './api.js';
 import { go } from './app.js';
@@ -81,12 +81,10 @@ function mapView(def) {
     g ? table(['SOC [%] \\ T [°C]', ...g.y.map(y => fmt(y))], g.x.map((x, i) => [fmt(x), ...g.z[i].map(z => fmt(z, 4))]), { scroll: true }) : h('div', { class: 'help' }, 'Provide via an Excel/CSV datasheet section (see template).'));
 }
 
-export function renderCellConfirm(root) {
-  const rerender = () => { root.replaceChildren(); renderCellConfirm(root); };
+function confirmBlock(root, rerender) {
   const missing = REQUIRED_CELL.filter(p => getPath(state, p) == null);
   if (!hasResistance()) missing.push('cell.r_dc_mohm');
 
-  root.append(h('h1', {}, '2 · Confirm cell parameters'));
   root.append(h('div', { class: 'banner' },
     'Extracted or entered values are never trusted blindly. Review each value against the source datasheet, edit where needed, then confirm. ',
     'Blue = extracted from a datasheet, amber = engineering assumption, red = required and missing.'));
@@ -111,10 +109,10 @@ export function renderCellConfirm(root) {
       h('input', { type: 'checkbox', style: 'width:auto', checked: !!state.cell.confirmed, onchange: e => { state.cell.confirmed = e.target.checked; save(); rerender(); } }),
       'I have reviewed these cell parameters against the source datasheet and confirm them for calculation.'),
     state.cell.confirmed ? h('div', { style: 'margin-top:8px' }, chip('CONFIRMED', 'pass'), ' Any later edit resets the confirmation.') : null);
-  root.append(box);
+  root.append(box, h('div', { style: 'margin-top:14px' }, h('button', { class: 'btn primary', onclick: () => go('pack') }, 'Next: battery configuration →')));
 }
 
-/** Replace the cell with the parser's *proposal*. Values stay unconfirmed until the user reviews them (step 2). */
+/** Replace the cell with the parser's *proposal*. Values stay unconfirmed until the user reviews and confirms them. */
 function applyExtraction(res) {
   state.ui.extraction = res;
   for (const k of Object.keys(state.provenance)) if (k.startsWith('cell.')) delete state.provenance[k];
@@ -150,13 +148,12 @@ function missingPanel(res, rerender) {
     ];
   });
   return card('Parameters not found in the datasheet',
-    'Missing values are never filled in silently. Provide them on step 2, or explicitly accept an engineering assumption (it will be flagged as Assumed / low confidence).',
+    'Missing values are never filled in silently. Enter them in the table below, or explicitly accept an engineering assumption (it will be flagged as Assumed / low confidence).',
     table(['Parameter', 'Need', 'Available suggestion', ''], rows));
 }
 
-export function renderCellUpload(root) {
+function uploadBlock(root, rerender) {
   const out = h('div');
-  const rerender = () => { root.replaceChildren(); renderCellUpload(root); };
 
   const handle = async (promise, label) => {
     out.replaceChildren(h('span', { class: 'spinner' }), ` Parsing ${label}…`);
@@ -177,30 +174,32 @@ export function renderCellUpload(root) {
   drop.addEventListener('dragleave', () => drop.classList.remove('over'));
   drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]); });
 
-  root.append(h('h1', {}, '1 · Cell datasheet'),
-    card('Project', null, h('div', { class: 'grid' },
+  root.append(
+    h('details', { class: 'fold' }, h('summary', {}, 'Project details (optional - shown on the report cover)'), h('div', { class: 'grid' },
       ...[['name', 'Project name'], ['customer', 'Customer'], ['project_no', 'Project no.'], ['engineer', 'Engineer'], ['revision', 'Revision']].map(([k, l]) =>
         h('label', { class: 'f' }, h('span', { class: 'lab' }, l),
           h('input', { value: state.project[k] || '', onchange: e => { state.project[k] = e.target.value; save(); } }))))),
-    card('Upload datasheet', 'Nothing extracted is trusted blindly - every value is shown for review, editing and confirmation before any calculation.',
+    card('Upload a cell datasheet (optional)', 'Or skip the upload and type the values in the table below. Nothing extracted is trusted blindly - every value is shown for review and must be confirmed.',
       drop, fileInput,
       h('div', { class: 'row', style: 'margin-top:10px;align-items:center' },
         h('div', {}, h('a', { href: '/api/templates/datasheet.csv' }, 'CSV template'), ' · ', h('a', { href: '/api/templates/datasheet.xlsx' }, 'Excel template'),
           ' · sample (synthetic test data): ',
           h('a', { href: '#', onclick: e => { e.preventDefault(); handle(api('/api/samples/cell_datasheet_LFP100Ah.csv/parse-datasheet', { json: {} }), 'sample CSV'); } }, 'CSV'), ' / ',
           h('a', { href: '#', onclick: e => { e.preventDefault(); handle(api('/api/samples/cell_datasheet_LFP100Ah.xlsx/parse-datasheet', { json: {} }), 'sample Excel'); } }, 'Excel'), ' / ',
-          h('a', { href: '#', onclick: e => { e.preventDefault(); handle(api('/api/samples/cell_datasheet_LFP100Ah.pdf/parse-datasheet', { json: {} }), 'sample PDF'); } }, 'PDF')),
-        h('div', { style: 'text-align:right' }, h('button', { class: 'btn', onclick: () => go('confirm') }, 'Skip: enter values manually →')))),
+          h('a', { href: '#', onclick: e => { e.preventDefault(); handle(api('/api/samples/cell_datasheet_LFP100Ah.pdf/parse-datasheet', { json: {} }), 'sample PDF'); } }, 'PDF')))),
     out);
 
   const ex = state.ui.extraction;
   if (ex) {
-    out.append(card(`Extraction result - ${ex.source_name}`, `${ex.source_type.toUpperCase()} · ${Object.keys(ex.fields).length} values, ${Object.keys(ex.curves).length} curves, ${Object.keys(ex.maps).length} maps`,
-      h('div', { class: 'row' }, h('div', {}, h('h4', {}, 'Extracted'), table(['Parameter', 'Value', 'Confidence'],
-        Object.entries(ex.fields).map(([p, f]) => [p.replace('cell.', ''), `${fmt(f.value, 5)} ${f.unit}`, chip(f.confidence, f.confidence)]), { scroll: true })),
-        h('div', {}, h('h4', {}, 'Notes from the parser'), issuesList(ex.issues))),
-      h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn primary', onclick: () => go('confirm') }, 'Review & confirm the values →'))));
+    out.append(h('div', { class: 'banner' }, `Extracted from ${ex.source_name}: ${Object.keys(ex.fields).length} values, ${Object.keys(ex.curves).length} curves, ${Object.keys(ex.maps).length} maps - review them below.`));
     const mp = missingPanel(ex, rerender);
     if (mp) out.append(mp);
   }
+}
+
+export function renderCell(root) {
+  const rerender = () => { const y = window.scrollY; root.replaceChildren(); renderCell(root); window.scrollTo(0, y); };
+  root.append(h('h1', {}, '1 · Cell parameters'));
+  uploadBlock(root, rerender);
+  confirmBlock(root, rerender);
 }

@@ -1,6 +1,6 @@
 """Browser smoke test: starts the app, walks through the workflow in headless Chromium, collects JS errors.
 
-Usage:  python scripts/ui_smoke.py [--shots DIR] [--steps cell,confirm,pack,...]
+Usage:  python scripts/ui_smoke.py [--shots DIR] [--steps cell,pack,...]
 Exit code 1 if any console error / page error / failed request is seen.
 """
 from __future__ import annotations
@@ -26,7 +26,7 @@ def free_port() -> int:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--shots", default=str(ROOT / "output" / "shots"))
-    ap.add_argument("--steps", default="cell,confirm,pack")
+    ap.add_argument("--steps", default="cell,pack")
     ap.add_argument("--script", default="", help="python file defining run(page, base) for custom interactions")
     args = ap.parse_args()
     Path(args.shots).mkdir(parents=True, exist_ok=True)

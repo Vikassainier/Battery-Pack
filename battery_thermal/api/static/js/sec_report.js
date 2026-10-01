@@ -1,11 +1,11 @@
-// Step 11 - engineering report (PDF / Excel). Implemented fully in Phase 9.
+// Step 10 - engineering report (PDF / Excel). Implemented fully in Phase 9.
 import { state, buildRequest } from './state.js';
 import { download } from './api.js';
 import { h, card, toast, field } from './ui.js';
 import { staleBanner } from './common.js';
 
 export function renderReport(root) {
-  root.append(h('h1', {}, '11 · Engineering report'));
+  root.append(h('h1', {}, '10 · Engineering report'));
   const st = staleBanner(); if (st) root.append(st);
   root.append(card('Project information', 'Shown on the report cover.', h('div', { class: 'grid' },
     ...[['name', 'Project name'], ['customer', 'Customer'], ['project_no', 'Project no.'], ['engineer', 'Engineer'], ['revision', 'Revision']].map(([k, l]) =>

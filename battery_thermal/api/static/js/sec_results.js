@@ -8,15 +8,15 @@ const later = fn => setTimeout(fn, 0);
 const T = (s, key) => (s[key] || []);
 
 // --------------------------------------------------------------------------------------------------------------------
-// Step 7 - run
+// Step 6 - run
 // --------------------------------------------------------------------------------------------------------------------
 function readiness() {
   const c = state.cell, p = state.pack;
   const rows = [
-    ['Cell parameters confirmed', !!c.confirmed, 'confirm', 'Review and confirm the cell parameters (step 2).'],
+    ['Cell parameters confirmed', !!c.confirmed, 'confirm', 'Review and confirm the cell parameters (step 1).'],
     ['Cell capacity, voltage, resistance present', c.capacity_ah != null && c.v_nom != null && (c.r_dc_mohm != null || c.r_vs_soc || c.r_vs_temp || c.r_map), 'confirm', 'Capacity, nominal voltage and a resistance value/table are required.'],
     ['Battery configuration complete', ['ns', 'np', 'n_modules', 'cells_per_module'].every(k => Number.isFinite(p[k])), 'pack', 'Ns, Np, modules and cells per module.'],
-    ['Electrical load defined', !!state.cycle || !!state.crate_profile, 'cycle', 'Upload a driving cycle (step 4) or define a C-rate duty profile (step 5).'],
+    ['Electrical load defined', !!state.cycle || !!state.crate_profile, 'cycle', 'Upload a drive cycle (step 3) or define a C-rate duty profile (step 5).'],
     ['Thermal mass known (mass & cp)', c.mass_kg != null && c.cp_j_kg_k != null, 'confirm', 'Needed for temperature prediction; heat/flow sizing works without it.', true],
     ['Cold plate defined', !!state.cold_plate, 'cooling', 'Needed for temperature, pressure drop and pump sizing.', true],
   ];
@@ -103,7 +103,7 @@ function dashboard(res) {
 }
 
 export async function renderRun(root) {
-  root.append(h('h1', {}, '7 · Run analysis'), card('Readiness', 'The analysis refuses to run on missing or inconsistent inputs and lists every problem.', readiness()));
+  root.append(h('h1', {}, '6 · Run analysis'), card('Readiness', 'The analysis refuses to run on missing or inconsistent inputs and lists every problem.', readiness()));
   const out = h('div');
   const btn = h('button', { class: 'btn primary', style: 'font-size:15px;padding:10px 22px' }, '▶ Run analysis');
   const doRun = async () => {
@@ -117,7 +117,7 @@ export async function renderRun(root) {
 }
 
 // --------------------------------------------------------------------------------------------------------------------
-// Step 8 - heat load
+// Step 7 - heat load
 // --------------------------------------------------------------------------------------------------------------------
 function graphs(res) {
   const s = res.series, t = s.t;
@@ -167,10 +167,10 @@ function stepTable(res) {
 }
 
 export function renderHeat(root) {
-  const res = needResult(root, '8 · Review heat load');
+  const res = needResult(root, '7 · Review heat load');
   if (!res) return;
   const H = res.heat, D = res.design, P = res.pack;
-  root.append(h('h1', {}, '8 · Review heat load'));
+  root.append(h('h1', {}, '7 · Review heat load'));
   const st = staleBanner(); if (st) root.append(st);
   root.append(h('div', { class: 'flow' }, ...res.explanations.chain.flatMap((c, i) => [h('span', { class: 'node' }, c.replace(' →', '')), i < res.explanations.chain.length - 1 ? h('span', { class: 'arrow' }, '→') : null])));
 
@@ -203,7 +203,7 @@ export function renderHeat(root) {
     h('div', { class: 'two' }, table(['Philosophy', 'Q [kW]', 'Per cell', 'Basis'], rows), bar),
     h('div', { class: 'banner', style: 'margin-top:10px' }, h('b', {}, `${D.label}: `), D.explanation),
     h('details', { class: 'fold', open: true }, h('summary', {}, 'Peak thermal load vs sustained cooling requirement'), h('p', {}, D.peak_vs_sustained)),
-    h('div', { class: 'row', style: 'align-items:center' }, h('span', { class: 'muted' }, 'Change the philosophy on step 6 and re-run to compare.'), h('button', { class: 'btn small', onclick: () => go('cooling') }, 'Open thermal & cooling parameters'))));
+    h('div', { class: 'row', style: 'align-items:center' }, h('span', { class: 'muted' }, 'Change the philosophy in step 4 and re-run to compare.'), h('button', { class: 'btn small', onclick: () => go('cooling') }, 'Open cooling parameters'))));
 
   // models used
   const M = res.models;
@@ -217,13 +217,13 @@ export function renderHeat(root) {
 }
 
 // --------------------------------------------------------------------------------------------------------------------
-// Step 9 - cooling requirement
+// Step 8 - cooling requirement
 // --------------------------------------------------------------------------------------------------------------------
 export function renderCoolingReq(root) {
-  const res = needResult(root, '9 · Review cooling requirement');
+  const res = needResult(root, '8 · Review cooling requirement');
   if (!res) return;
   const C = res.cooling, S = res.sizing, D = res.design, cp = res.cold_plate, hy = res.hydraulics, TH = res.thermal;
-  root.append(h('h1', {}, '9 · Review cooling requirement'));
+  root.append(h('h1', {}, '8 · Review cooling requirement'));
   const st = staleBanner(); if (st) root.append(st);
 
   const cap = S.capacity;
@@ -253,7 +253,7 @@ export function renderCoolingReq(root) {
       h('details', { class: 'fold' }, h('summary', {}, 'Thermal resistance [K/W] vs overall heat-transfer coefficient U [W/(m²·K)]'),
         h('p', {}, 'Thermal resistance R [K/W] is the absolute temperature rise per watt through one specific part of a specific geometry; resistances in series simply add. The overall heat-transfer coefficient U [W/(m²·K)] = 1/(R·A_ref) normalises the same resistance by a reference area, so it depends on which area is chosen (here the cell contact area or the plate footprint). U is used to compare layers, materials and technologies independent of size; R is used to compute temperatures for the actual design.')),
       cp.warnings.length ? issuesList(cp.warnings.map(w => ({ severity: 'warning', code: 'COLDPLATE_NOTE', field: '', message: w }))) : null));
-  } else root.append(card('Cold plate', null, h('div', { class: 'banner' }, 'No cold plate defined: define one on step 6 to obtain temperatures, thermal resistance chain, pressure drop and pump sizing.')));
+  } else root.append(card('Cold plate', null, h('div', { class: 'banner' }, 'No cold plate defined: define one in step 4 to obtain temperatures, thermal resistance chain, pressure drop and pump sizing.')));
 
   if (hy) root.append(card('Coolant flow & pressure drop (per plate channel)', 'Correlations: Shah-London (laminar), Haaland/Gnielinski (turbulent), linear blend in the transition region.',
     h('div', { class: 'row' },

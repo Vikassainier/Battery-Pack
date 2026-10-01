@@ -1,4 +1,4 @@
-// Step 6 - Thermal & cooling parameters: design philosophy, heat model, coolant, cold plate, pump, limits.
+// Step 4 - Cooling parameters: design philosophy, coolant and cold plate up front; heat model, thermal model, pump and limits under 'Advanced'.
 import { state, getPath, setPath, setValue, save } from './state.js';
 import { api } from './api.js';
 import { go } from './app.js';
@@ -32,7 +32,7 @@ export function renderCooling(root) {
   const rerender = () => { const y = window.scrollY; root.replaceChildren(); renderCooling(root); window.scrollTo(0, y); };
   const th = state.thermal;
 
-  root.append(h('h1', {}, '6 · Thermal & cooling parameters'),
+  root.append(h('h1', {}, '4 · Cooling parameters'),
     h('div', { class: 'banner' }, 'Amber fields are engineering defaults (assumptions) - they are listed with source and confidence in "Assumptions & data quality". Editing a value marks it as user-provided.'));
 
   // ---- A. design philosophy ---------------------------------------------------------------------------
@@ -50,9 +50,11 @@ export function renderCooling(root) {
   setPhiloText();
 
   // ---- B. heat model ----------------------------------------------------------------------------------------
+  const adv = h('div');
   const lv = levelsSupported();
   const [entText, entCls] = entropicStatus();
-  root.append(card('Heat-generation model',
+  if (entCls !== 'ok') root.append(h('div', { class: `banner ${entCls === 'warning' ? 'warn' : 'error'}` }, 'Entropic heat: ', entText, ' (Advanced settings below)'));
+  adv.append(card('Heat-generation model',
     'Joule heat I²R plus reversible (entropic) heat −I·T·dU/dT, evaluated at every time step.',
     h('h4', {}, 'Resistance model'),
     h('div', { class: 'banner' }, `Confirmed cell data supports level(s): ${lv.length ? lv.map(l => `L${l}`).join(', ') : 'none - resistance data missing'}. `,
@@ -70,7 +72,7 @@ export function renderCooling(root) {
       field({ path: 'entropic.constant_mv_per_k', label: 'Estimated dU/dT (user estimate)', unit: 'mV/K', help: 'Typical |dU/dT|: 0.05-0.3 mV/K. Sign: + means endothermic on discharge.' }))));
 
   // ---- C. thermal model ----------------------------------------------------------------------------------------
-  root.append(card('Thermal model & ambient coupling', 'Lumped pack thermal mass with exact transient integration; screening-level cell-to-cell estimate.',
+  adv.append(card('Thermal model & ambient coupling', 'Lumped pack thermal mass with exact transient integration; screening-level cell-to-cell estimate.',
     fieldsGrid([
       { path: 'thermal.extra_thermal_mass_j_k', label: 'Extra thermal mass (housing, busbars, plates)', unit: 'J/K' },
       { path: 'thermal.ambient_ua_w_k', label: 'Pack-to-ambient conductance UA', unit: 'W/K', help: 'Blank = estimated from cell volume, fill factor 0.4 and h_ext' },
@@ -151,12 +153,13 @@ export function renderCooling(root) {
       h('div', { style: 'margin-top:10px' }, h('button', { class: 'btn small danger', onclick: () => { state.cold_plate = null; save(); rerender(); } }, 'Remove cold plate')));
   }
   root.append(cpCard);
+  root.append(h('details', { class: 'fold', open: entCls === 'error' }, h('summary', {}, 'Advanced settings - resistance & entropic heat model, thermal model, pump, check limits (defaults are fine for most projects)'), adv));
 
   // ---- F/G. pump, radiator, limits ------------------------------------------------------------------------------------------
-  root.append(card('Pump & radiator assumptions', null, fieldsGrid([
+  adv.append(card('Pump & radiator assumptions', null, fieldsGrid([
     { path: 'pump.overall_efficiency', label: 'Pump overall efficiency (hydraulic → electrical)', unit: '-' },
     { path: 'radiator.air_dt_k', label: 'Assumed air-side temperature rise', unit: 'K' }])));
-  root.append(card('Design margins & check limits (configurable)', 'Margin classes: <0 % insufficient · 0…warning % warning · warning…target % moderate · ≥ target % adequate.', fieldsGrid([
+  adv.append(card('Design margins & check limits (configurable)', 'Margin classes: <0 % insufficient · 0…warning % warning · warning…target % moderate · ≥ target % adequate.', fieldsGrid([
     { path: 'limits.cooling_margin_warn_pct', label: 'Cooling margin - warning below', unit: '%' }, { path: 'limits.cooling_margin_target_pct', label: 'Cooling margin - engineering target', unit: '%' },
     { path: 'limits.thermal_margin_warn_k', label: 'Thermal margin - warning below', unit: 'K' }, { path: 'limits.dt_warn_fraction', label: 'ΔT warning at fraction of target', unit: '-' },
     { path: 'limits.max_velocity_warn_m_s', label: 'Channel velocity - warning', unit: 'm/s' }, { path: 'limits.max_velocity_fail_m_s', label: 'Channel velocity - fail', unit: 'm/s' },
@@ -164,5 +167,5 @@ export function renderCooling(root) {
     { path: 'limits.loop_dp_warn_kpa', label: 'Loop ΔP - warning', unit: 'kPa' }, { path: 'limits.loop_dp_fail_kpa', label: 'Loop ΔP - fail', unit: 'kPa' },
     { path: 'limits.flow_warn_lpm', label: 'Pack flow - warning', unit: 'L/min' }, { path: 'limits.flow_fail_lpm', label: 'Pack flow - fail', unit: 'L/min' },
     { path: 'limits.flow_min_lpm', label: 'Minimum practical flow', unit: 'L/min' }])));
-  root.append(h('div', { style: 'margin-top:14px' }, h('button', { class: 'btn primary', onclick: () => go('run') }, 'Next: run the analysis →')));
+  root.append(h('div', { style: 'margin-top:14px' }, h('button', { class: 'btn primary', onclick: () => go('crate') }, 'Next: charging & discharging parameters →')));
 }

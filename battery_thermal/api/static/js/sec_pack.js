@@ -43,14 +43,14 @@ export function renderPack(root) {
         r.probe ? kv([['Pack current', `${fmt(r.probe.i_pack_a)} A`], ['Module current', `${fmt(r.probe.i_module_a)} A`],
                       ['Cell current', `${fmt(r.probe.i_cell_a)} A`], ['C-rate', `${fmt(r.probe.c_rate)} C`]]) : null));
     } else {
-      out.append(h('div', { class: 'banner warn' }, 'Pack quantities need confirmed cell capacity and nominal voltage (step 2).'));
+      out.append(h('div', { class: 'banner warn' }, 'Pack quantities need confirmed cell capacity and nominal voltage (step 1).'));
     }
     out.append(card('Configuration validation', null, issuesList(r.issues.filter(i => i.code.startsWith('PACK') || i.code.startsWith('SOC') ||
       i.code.startsWith('TEMP') || i.code.startsWith('TARGET') || i.code.startsWith('AMBIENT') || i.code.startsWith('CELL_CAPACITY') || i.code.startsWith('CELL_VOLTAGE_MISSING')))));
   }, 250);
 
   root.append(
-    h('h1', {}, '3 · Battery pack configuration'),
+    h('h1', {}, '2 · Battery configuration'),
     card('Topology', 'Series / parallel counts and module definition. The cell count must agree with the module definition.',
       fieldsGrid(PACK_FIELDS.filter(f => f.path !== 'pack.modules_in_series' || state.pack.module_arrangement === 'series_parallel'), () => {
         if (state.pack.module_arrangement === 'series_parallel') { /* re-render to show modules_in_series */ }
@@ -59,6 +59,7 @@ export function renderPack(root) {
     card('Stated pack values (optional consistency check)', 'If you know the pack voltage / capacity / energy from the customer, enter them - inconsistencies are flagged.',
       fieldsGrid(PACK_STATED, refresh)),
     card('Operating window & thermal targets', null, fieldsGrid(PACK_OPERATING, refresh)),
-    out);
+    out,
+    h('div', { style: 'margin-top:14px' }, h('button', { class: 'btn primary', onclick: () => window.go('cycle') }, 'Next: drive cycle →')));
   refresh();
 }
